@@ -114,8 +114,15 @@ echo "WSGIApplicationGroup %{GLOBAL}" >> \
 ## 2. Kết thúc cài đặt
 
 ```bash
+# Generate static files và compression manifest
+cd /usr/share/openstack-dashboard
+python3 manage.py compress
+python3 manage.py collectstatic --noinput 2>/dev/null || true
+
 systemctl reload apache2
 ```
+
+> **Lưu ý:** Bước `python3 manage.py compress` là bắt buộc. Nếu bỏ qua, Horizon sẽ hiện lỗi **"Something went wrong!"** với message `OfflineGenerationError: key is missing from offline manifest`. Đây là do Django offline compression được bật mặc định nhưng chưa có manifest file.
 
 ---
 
@@ -137,3 +144,43 @@ Kết quả mong đợi: giao diện Horizon hiển thị với dashboard tổng
 ---
 
 Trước: [07-launch-instance.md](07-launch-instance.md)
+
+---
+
+## Hỏi & Đáp
+
+### Lỗi "Something went wrong!" khi truy cập Horizon
+
+**Triệu chứng:** Horizon load được trang nhưng hiện lỗi "Something went wrong! An unexpected error has occurred."
+
+**Nguyên nhân:** Django offline compression được bật mặc định nhưng chưa generate manifest file. Log Apache sẽ thấy:
+
+```
+compressor.exceptions.OfflineGenerationError: You have offline compression enabled
+but key "xxx" is missing from offline manifest.
+You may need to run "python manage.py compress".
+```
+
+**Cách fix:**
+
+```bash
+cd /usr/share/openstack-dashboard
+python3 manage.py compress
+systemctl reload apache2
+```
+
+---
+
+### DNS bị mất sau khi chuyển ens33 vào OVS bridge
+
+**Triệu chứng:** `apt install` báo `Temporary failure resolving` dù ping IP vẫn được.
+
+**Nguyên nhân:** Khi `ens33` được gán vào OVS bridge, cấu hình DNS từ netplan/systemd-resolved bị mất vì interface không còn được netplan quản lý.
+
+**Cách fix:**
+
+```bash
+echo "nameserver 8.8.8.8" > /etc/resolv.conf
+```
+
+Đã được thêm vào systemd service `ovs-br-provider` để tự động fix sau mỗi lần reboot.

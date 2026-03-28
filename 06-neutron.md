@@ -74,6 +74,13 @@ apt install -y neutron-server neutron-plugin-ml2 \
 
 ### 1.4 Cấu hình netplan - chỉ quản lý ens37 và ens38
 
+> Script tự động cho bước 1.4 → 1.7: [`scripts/controller-ovn-setup.sh`](scripts/controller-ovn-setup.sh)
+> ```bash
+> chmod +x scripts/controller-ovn-setup.sh
+> bash scripts/controller-ovn-setup.sh
+> ```
+> Hoặc thực hiện thủ công từng bước bên dưới.
+
 Sửa file `/etc/netplan/50-cloud-init.yaml`:
 
 ```yaml
@@ -136,6 +143,9 @@ Gán IP cho `br-provider` và cấu hình routing:
 ip addr add 192.168.182.195/24 dev br-provider
 ip link set br-provider up
 ip route add default via 192.168.182.2 dev br-provider
+
+# DNS có thể bị mất sau khi chuyển ens33 vào OVS, thêm lại
+echo "nameserver 8.8.8.8" > /etc/resolv.conf
 ```
 
 Kiểm tra kết nối:
@@ -373,6 +383,13 @@ apt install -y ovn-host openvswitch-switch neutron-ovn-metadata-agent
 ```
 
 ### 2.2 Khởi động OVS
+
+> Script tự động cho bước 2.2 → 2.5: [`scripts/compute-ovn-setup.sh`](scripts/compute-ovn-setup.sh)
+> ```bash
+> chmod +x scripts/compute-ovn-setup.sh
+> bash scripts/compute-ovn-setup.sh
+> ```
+> Hoặc thực hiện thủ công từng bước bên dưới.
 
 ```bash
 systemctl start openvswitch-switch

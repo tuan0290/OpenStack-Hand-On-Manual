@@ -220,3 +220,450 @@ ls -la /etc/keystone/fernet-keys/
 # Kiểm tra DB
 mysql -u keystone -pWelcome123 keystone -e "SELECT * FROM user LIMIT 5\G"
 ```
+
+---
+
+## Lab: Quan sát Keystone hoạt động thực tế
+
+### 1. Theo dõi luồng xác thực
+
+Mở 2 terminal song song:
+
+**Terminal 1 - theo dõi Keystone log:**
+```bash
+tail -f /var/log/apache2/keystone.log | grep -v "^$"
+```
+
+**Terminal 2 - thực hiện các thao tác:**
+```bash
+source ~/admin-openrc
+
+# Lấy token và quan sát log
+openstack token issue
+
+# Thử với sai password - quan sát log báo lỗi gì
+openstack --os-auth-url http://controller:5000/v3 \
+  --os-project-domain-name Default \
+  --os-user-domain-name Default \
+  --os-project-name admin \
+  --os-username admin \
+  --os-password WRONG_PASSWORD \
+  token issue
+```
+
+---
+
+### 2. Giải mã Fernet token
+
+```bash
+source ~/admin-openrc
+TOKEN=$(openstack token issue -f value -c id)
+echo "Token: $TOKEN"
+echo "Token length: ${#TOKEN}"
+
+# Fernet token là base64url encoded
+# Giải mã phần header (không decrypt được nội dung vì cần key)
+echo $TOKEN | cut -d'.' -f1 | base64 -d 2>/dev/null | xxd | head -5
+
+# Xem token info qua API
+curl -s \
+  -H "X-Auth-Token: $TOKEN" \
+  -H "X-Subject-Token: $TOKEN" \
+  http://controller:5000/v3/auth/tokens | python3 -m json.tool | head -50
+```
+
+---
+
+### 3. Quan sát Fernet key rotation
+
+```bash
+# Xem trạng thái keys hiện tại
+ls -la /etc/keystone/fernet-keys/
+# File 0 = staged key, file số cao nhất = primary key
+
+# Lấy token với key hiện tại
+TOKEN_BEFORE=$(openstack token issue -f value -c id)
+
+# Rotate keys
+keystone-manage fernet_rotate \
+  --keystone-user keystone \
+  --keystone-group keystone
+
+# Xem keys sau rotate
+ls -la /etc/keystone/fernet-keys/
+# Primary key mới = index cao hơn trước
+# Staged key mới = file 0 (khác với staged key cũ)
+
+# Token cũ vẫn còn valid (secondary key vẫn có thể decrypt)
+openstack --os-auth-url http://controller:5000/v3 \
+  --os-project-domain-name Default \
+  --os-user-domain-name Default \
+  --os-project-name admin \
+  --os-username admin \
+  token issue
+```
+
+---
+
+### 4. Kiểm tra Service Catalog
+
+```bash
+source ~/admin-openrc
+
+# Xem toàn bộ catalog
+openstack catalog list
+
+# Xem endpoint của từng service
+openstack endpoint list
+
+# Xem endpoint của 1 service cụ thể
+openstack endpoint list --service keystone
+openstack endpoint list --service nova
+
+# Lấy token và xem catalog trong token
+TOKEN=$(openstack token issue -f value -c id)
+curl -s \
+  -H "X-Auth-Token: $TOKEN" \
+  -H "X-Subject-Token: $TOKEN" \
+  http://controller:5000/v3/auth/tokens \
+  | python3 -m json.tool | grep -A3 '"catalog"'
+```
+
+---
+
+### 5. Test phân quyền Role
+
+```bash
+source ~/admin-openrc
+
+# Tạo user test với role member
+openstack user create --domain default --password Test123 testuser
+openstack role add --project demo --user testuser member
+
+# Tạo file openrc cho testuser
+cat > ~/test-openrc << 'EOF'
+export OS_PROJECT_DOMAIN_NAME=Default
+export OS_USER_DOMAIN_NAME=Default
+export OS_PROJECT_NAME=demo
+export OS_USERNAME=testuser
+export OS_PASSWORD=Test123
+export OS_AUTH_URL=http://controller:5000/v3
+export OS_IDENTITY_API_VERSION=3
+EOF
+
+source ~/test-openrc
+
+# testuser có thể làm gì?
+openstack server list          # OK - xem VM của project demo
+openstack flavor list          # OK - xem flavor (public)
+openstack user list            # FAIL - không có quyền admin
+
+# Thử thao tác admin
+openstack project create test-project  # FAIL - cần admin role
+
+# Dọn dẹp
+source ~/admin-openrc
+openstack user delete testuser
+```
+
+---
+
+### 6. Xem Memcached cache token
+
+```bash
+# Xem stats Memcached trước khi validate token
+echo "stats" | nc 192.168.225.195 11211 | grep -E "curr_items|get_hits|get_misses"
+
+# Validate token lần đầu (cache miss)
+source ~/admin-openrc
+openstack server list
+
+# Xem stats sau - get_misses tăng (lần đầu không có cache)
+echo "stats" | nc 192.168.225.195 11211 | grep -E "curr_items|get_hits|get_misses"
+
+# Validate lại ngay (cache hit)
+openstack server list
+
+# Xem stats - get_hits tăng (lần này có cache)
+echo "stats" | nc 192.168.225.195 11211 | grep -E "curr_items|get_hits|get_misses"
+```
+
+---
+
+## Troubleshooting: Các lỗi phổ biến với Keystone
+
+### Cách đọc lỗi nhanh
+
+```bash
+# Bước 1: xem log Keystone
+tail -50 /var/log/apache2/keystone.log | grep -i "error\|warn\|unauthorized"
+
+# Bước 2: test kết nối Keystone
+curl -s http://controller:5000/v3 | python3 -m json.tool
+
+# Bước 3: test lấy token thủ công
+curl -s -X POST http://controller:5000/v3/auth/tokens \
+  -H "Content-Type: application/json" \
+  -d '{
+    "auth": {
+      "identity": {"methods": ["password"],
+        "password": {"user": {"name": "admin", "domain": {"name": "Default"},
+          "password": "Welcome123"}}},
+      "scope": {"project": {"name": "admin", "domain": {"name": "Default"}}}
+    }
+  }' | python3 -m json.tool
+```
+
+---
+
+### Lỗi 1: "HTTP 401 Unauthorized / The request you have made requires authentication"
+
+**Triệu chứng:**
+```
+ERROR (Unauthorized): The request you have made requires authentication. (HTTP 401)
+```
+
+**Nguyên nhân và cách kiểm tra:**
+
+```bash
+# A. Biến môi trường chưa được set hoặc sai
+env | grep OS_
+# Phải có đủ: OS_AUTH_URL, OS_USERNAME, OS_PASSWORD, OS_PROJECT_NAME...
+
+# Nếu thiếu → source lại
+source ~/admin-openrc
+
+# B. Password có ký tự đặc biệt
+# Ký tự như !, @, #, $ trong password cần escape trong shell
+# Ví dụ: password = "Pass!123"
+export OS_PASSWORD='Pass!123'  # dùng single quote
+
+# C. OS_AUTH_URL sai
+echo $OS_AUTH_URL
+# Phải là: http://controller:5000/v3 (không phải /v2 hay /v2.0)
+
+# D. Keystone không chạy
+curl http://controller:5000/v3
+# Nếu connection refused → Apache chưa chạy
+systemctl status apache2
+
+# E. Sai password thực sự
+# Test trực tiếp
+openstack --os-auth-url http://controller:5000/v3 \
+  --os-project-domain-name Default \
+  --os-user-domain-name Default \
+  --os-project-name admin \
+  --os-username admin \
+  --os-password Welcome123 \
+  token issue
+```
+
+---
+
+### Lỗi 2: "Unable to validate token / Failed to fetch token data"
+
+**Triệu chứng:**
+```
+CRITICAL keystonemiddleware.auth_token [-] Unable to validate token:
+Failed to fetch token data from identity server
+```
+
+**Nguyên nhân:** Service (Nova, Glance...) không kết nối được Keystone để validate token.
+
+```bash
+# Kiểm tra từ service đang lỗi (ví dụ Nova)
+grep "keystonemiddleware\|auth_token" /var/log/nova/nova-conductor.log | tail -10
+
+# Kiểm tra keystone_authtoken config trong service
+grep -A10 "\[keystone_authtoken\]" /etc/nova/nova.conf
+
+# Test kết nối Keystone từ controller
+curl http://controller:5000/v3
+
+# Kiểm tra Memcached (nếu cache bị corrupt)
+echo "flush_all" | nc 192.168.225.195 11211
+# Sau đó thử lại
+```
+
+---
+
+### Lỗi 3: "404 Not Found" khi gọi Keystone
+
+**Triệu chứng:**
+```
+Not Found (HTTP 404)
+```
+
+**Nguyên nhân:** Keystone WSGI script không tồn tại hoặc Apache config sai.
+
+```bash
+# Kiểm tra WSGI script
+ls -la /usr/bin/keystone-wsgi-public
+
+# Nếu không tồn tại → tạo lại (vấn đề thực tế với Flamingo)
+cat > /usr/bin/keystone-wsgi-public << 'EOF'
+import sys
+sys.path.insert(0, '/usr/lib/python3/dist-packages')
+from keystone.server.wsgi import initialize_public_application
+application = initialize_public_application()
+EOF
+chmod 755 /usr/bin/keystone-wsgi-public
+chown keystone:keystone /usr/bin/keystone-wsgi-public
+
+systemctl restart apache2
+
+# Kiểm tra Apache config
+cat /etc/apache2/sites-enabled/keystone.conf
+# WSGIScriptAlias phải trỏ đúng file
+```
+
+---
+
+### Lỗi 4: Token hết hạn liên tục / "Token not found"
+
+**Triệu chứng:** Token expire quá nhanh hoặc bị invalidate.
+
+```bash
+# Xem thời hạn token mặc định
+grep "expiration" /etc/keystone/keystone.conf
+# Mặc định: 3600 giây (1 giờ)
+
+# Xem token vừa lấy hết hạn lúc nào
+openstack token issue | grep expires
+
+# Nếu token expire quá nhanh → kiểm tra đồng hồ hệ thống
+date
+# Phải đồng bộ với NTP
+chronyc tracking | grep "System time"
+
+# Nếu đồng hồ lệch nhiều → sync lại
+chronyc makestep
+```
+
+---
+
+### Lỗi 5: "Fernet key not found" / Token không decrypt được
+
+**Triệu chứng:**
+```
+keystone.exception.ValidationError: Invalid token
+```
+
+**Nguyên nhân:** Fernet key đã bị rotate và key cũ không còn tồn tại.
+
+```bash
+# Xem keys hiện tại
+ls -la /etc/keystone/fernet-keys/
+
+# Xem log lỗi
+grep "fernet\|token\|decrypt" /var/log/apache2/keystone.log | tail -10
+
+# Nếu key bị mất → user phải lấy token mới
+# Không thể recover token cũ
+
+# Kiểm tra max_active_keys
+grep "max_active_keys" /etc/keystone/keystone.conf
+# Mặc định: 3
+# Nếu rotate quá thường → tăng max_active_keys
+```
+
+---
+
+### Lỗi 6: Endpoint không tìm thấy service
+
+**Triệu chứng:**
+```
+EndpointNotFound: Endpoint not found
+```
+
+```bash
+# Kiểm tra service catalog
+openstack service list
+openstack endpoint list
+
+# Nếu thiếu endpoint → tạo lại
+# Ví dụ thiếu nova endpoint:
+openstack endpoint create --region RegionOne \
+  compute public http://controller:8774/v2.1
+openstack endpoint create --region RegionOne \
+  compute internal http://controller:8774/v2.1
+openstack endpoint create --region RegionOne \
+  compute admin http://controller:8774/v2.1
+
+# Kiểm tra OS_REGION_NAME có khớp không
+echo $OS_REGION_NAME
+openstack endpoint list --region RegionOne
+```
+
+---
+
+### Lỗi 7: "Connection refused" khi gọi http://controller:5000
+
+```bash
+# Kiểm tra Apache đang chạy
+systemctl status apache2
+
+# Kiểm tra port 5000 đang listen
+ss -tlnp | grep 5000
+
+# Kiểm tra Apache config
+apache2ctl -t  # test syntax
+apache2ctl -S  # xem virtual hosts
+
+# Xem error log Apache
+tail -20 /var/log/apache2/error.log
+
+# Restart Apache
+systemctl restart apache2
+```
+
+---
+
+### Quick Diagnostic Script cho Keystone
+
+```bash
+#!/bin/bash
+# Chạy trên controller
+
+echo "=== Apache Status ==="
+systemctl is-active apache2
+
+echo ""
+echo "=== Keystone Endpoint ==="
+curl -s http://controller:5000/v3 | python3 -m json.tool | grep version
+
+echo ""
+echo "=== Fernet Keys ==="
+ls -la /etc/keystone/fernet-keys/
+
+echo ""
+echo "=== Token Test ==="
+TOKEN=$(curl -s -X POST http://controller:5000/v3/auth/tokens \
+  -H "Content-Type: application/json" \
+  -d '{
+    "auth": {
+      "identity": {"methods": ["password"],
+        "password": {"user": {"name": "admin", "domain": {"name": "Default"},
+          "password": "Welcome123"}}},
+      "scope": {"project": {"name": "admin", "domain": {"name": "Default"}}}
+    }
+  }' -D - 2>/dev/null | grep "X-Subject-Token" | awk '{print $2}' | tr -d '\r')
+
+if [ -n "$TOKEN" ]; then
+  echo "Token obtained: ${TOKEN:0:20}..."
+else
+  echo "FAILED to get token"
+fi
+
+echo ""
+echo "=== Service List ==="
+OS_AUTH_URL=http://controller:5000/v3 \
+OS_USERNAME=admin OS_PASSWORD=Welcome123 \
+OS_PROJECT_NAME=admin OS_USER_DOMAIN_NAME=Default \
+OS_PROJECT_DOMAIN_NAME=Default OS_IDENTITY_API_VERSION=3 \
+openstack service list 2>/dev/null || echo "FAILED"
+
+echo ""
+echo "=== Recent Keystone Errors ==="
+grep -i "error\|warn\|unauthorized" /var/log/apache2/keystone.log 2>/dev/null | tail -5
+```

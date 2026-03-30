@@ -35,6 +35,8 @@ Tài liệu hướng dẫn cài đặt OpenStack **Flamingo (2025.2)** trên **U
 | [06-neutron.md](06-neutron.md) | Networking Service (OVN) | Controller + Compute |
 | [07-launch-instance.md](07-launch-instance.md) | Tạo instance đầu tiên | Controller |
 | [08-horizon.md](08-horizon.md) | Dashboard | Controller |
+| [09-cinder.md](09-cinder.md) | Block Storage (LVM) | Controller + Storage Node |
+| [10-swift.md](10-swift.md) | Object Storage | Controller + Object1 + Object2 |
 
 ---
 

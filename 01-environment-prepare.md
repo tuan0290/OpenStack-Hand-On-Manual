@@ -168,6 +168,8 @@ Sửa file `/etc/hosts`, thêm nội dung sau:
 192.168.225.196    compute1
 ```
 
+> Dùng **Management IP** (`192.168.225.x`) cho hostname. Các service OpenStack và Chrony giao tiếp qua Management network, không phải Provider IP (`192.168.182.x`).
+
 Khởi động lại máy:
 
 ```bash

@@ -11,24 +11,14 @@
 ---
 
 ## 1. Mô hình cài đặt
+Mô hình mạng trong VmWare
 ![Mô hình mạng Virtual Network](/image/Vitrual_network.png)
-
 
 Mô hình triển khai Lab OpenStack Flamingo (2025.2) trên Ubuntu 24.04 LTS với 2 VM chạy trên VMware Workstation.
 
-```
-                        INTERNET
-                             |
-                    [VMware NAT (VMnet8)]
-                     192.168.182.0/24
-                    /                  \
-      [CONTROLLER]                      [COMPUTE1]
-   ens33 | ens37  | ens38              ens33 | ens37  | ens38
-    |       |       |                |       |       |
- VMnet8  VMnet1  VMnet2           VMnet8  VMnet1  VMnet2
- 182.x   225.x   147.x            182.x   225.x   147.x
- (Provider) (Mgmt) (Tunnel)      (Provider) (Mgmt) (Tunnel)
-```
+
+![Mô hình triển khai](/image/Gemini_Generated_Image_b7ell5b7ell5b7el.png)
+
 
 **Vai trò từng mạng:**
 
@@ -44,6 +34,8 @@ Mô hình triển khai Lab OpenStack Flamingo (2025.2) trên Ubuntu 24.04 LTS v�
 
 ### Phân hoạch địa chỉ IP
 
+**Core nodes (bắt buộc):**
+
 | Hostname | VMware Net | Interface | IP Address | Netmask | Gateway | DNS |
 |---|---|---|---|---|---|---|
 | Controller | VMnet8 (NAT) | ens33 | 192.168.182.195 | 255.255.255.0 | 192.168.182.2 | 8.8.8.8 |
@@ -53,14 +45,35 @@ Mô hình triển khai Lab OpenStack Flamingo (2025.2) trên Ubuntu 24.04 LTS v�
 | Compute1 | VMnet1 (Host-only) | ens37 | 192.168.225.196 | 255.255.255.0 | | |
 | Compute1 | VMnet2 (Host-only) | ens38 | 192.168.147.196 | 255.255.255.0 | | |
 
+**Extended nodes (tùy chọn - Cinder/Swift):**
+
+| Hostname | VMware Net | Interface | IP Address | Netmask | Gateway | DNS | Dùng cho |
+|---|---|---|---|---|---|---|---|
+| storage1 | VMnet8 (NAT) | ens33 | 192.168.182.197 | 255.255.255.0 | 192.168.182.2 | 8.8.8.8 | Cinder |
+| storage1 | VMnet1 (Host-only) | ens37 | 192.168.225.197 | 255.255.255.0 | | | Cinder |
+| object1 | VMnet8 (NAT) | ens33 | 192.168.182.198 | 255.255.255.0 | 192.168.182.2 | 8.8.8.8 | Swift |
+| object1 | VMnet1 (Host-only) | ens37 | 192.168.225.198 | 255.255.255.0 | | | Swift |
+| object2 | VMnet8 (NAT) | ens33 | 192.168.182.199 | 255.255.255.0 | 192.168.182.2 | 8.8.8.8 | Swift |
+| object2 | VMnet1 (Host-only) | ens37 | 192.168.225.199 | 255.255.255.0 | | | Swift |
+
 > Gateway của VMnet8 (NAT) mặc định VMware dùng `.2` (ví dụ `192.168.182.2`). Kiểm tra lại trong **VMware → Edit → Virtual Network Editor → VMnet8 → NAT Settings**.
 
 ### Yêu cầu phần cứng tối thiểu
 
-| Node | vCPU | RAM | Disk 1 (OS) | Disk 2 |
-|---|---|---|---|---|
-| Controller | 4 | 4 GB | 40 GB | 30 GB |
-| Compute1 | 4 | 4 GB | 50 GB | - |
+**Core nodes:**
+
+| Node | vCPU | RAM | Disk 1 (OS) | Disk 2 | Ghi chú |
+|---|---|---|---|---|---|
+| Controller | 4 | 4 GB | 40 GB | 30 GB | Disk 2 dự phòng |
+| Compute1 | 4 | 4 GB | 50 GB | - | |
+
+**Extended nodes:**
+
+| Node | vCPU | RAM | Disk 1 (OS) | Disk 2 | Disk 3 | Ghi chú |
+|---|---|---|---|---|---|---|
+| storage1 | 2 | 2 GB | 20 GB | 50 GB | - | Disk 2 cho Cinder LVM |
+| object1 | 2 | 2 GB | 20 GB | 20 GB | 20 GB | Disk 2+3 cho Swift data |
+| object2 | 2 | 2 GB | 20 GB | 20 GB | 20 GB | Disk 2+3 cho Swift data |
 
 **Lưu ý chung:**
 - OS: Ubuntu 24.04 LTS (Server)

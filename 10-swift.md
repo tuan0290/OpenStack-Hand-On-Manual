@@ -22,8 +22,8 @@
                     /    |    |    \
       [CONTROLLER] [COMPUTE1] [OBJECT1] [OBJECT2]
       (đã có)      (đã có)    (VM mới)  (VM mới)
-                              ens33:.182.197  ens33:.182.198  (NAT - internet)
-                              ens37:.225.197  ens37:.225.198  (Management)
+                              ens33:.182.198  ens33:.182.199  (NAT - internet)
+                              ens37:.225.198  ens37:.225.199  (Management)
                               /dev/sdb        /dev/sdb
                               /dev/sdc        /dev/sdc
 ```
@@ -32,10 +32,10 @@
 
 | Hostname | VMware Net | Interface | IP Address | Netmask | Gateway | DNS |
 |---|---|---|---|---|---|---|
-| object1 | VMnet8 (NAT) | ens33 | 192.168.182.197 | 255.255.255.0 | 192.168.182.2 | 8.8.8.8 |
-| object1 | VMnet1 (Host-only) | ens37 | 192.168.225.197 | 255.255.255.0 | | |
-| object2 | VMnet8 (NAT) | ens33 | 192.168.182.198 | 255.255.255.0 | 192.168.182.2 | 8.8.8.8 |
-| object2 | VMnet1 (Host-only) | ens37 | 192.168.225.198 | 255.255.255.0 | | |
+| object1 | VMnet8 (NAT) | ens33 | 192.168.182.198 | 255.255.255.0 | 192.168.182.2 | 8.8.8.8 |
+| object1 | VMnet1 (Host-only) | ens37 | 192.168.225.198 | 255.255.255.0 | | |
+| object2 | VMnet8 (NAT) | ens33 | 192.168.182.199 | 255.255.255.0 | 192.168.182.2 | 8.8.8.8 |
+| object2 | VMnet1 (Host-only) | ens37 | 192.168.225.199 | 255.255.255.0 | | |
 
 > `ens33` (VMnet8/NAT) dùng để download packages khi cài đặt.
 > `ens37` (VMnet1) là Management network - Swift dùng để giao tiếp giữa các node.
@@ -79,24 +79,6 @@ network:
   ethernets:
     ens33:
       addresses:
-        - 192.168.182.197/24
-      routes:
-        - to: default
-          via: 192.168.182.2
-      nameservers:
-        addresses: [8.8.8.8]
-    ens37:
-      addresses:
-        - 192.168.225.197/24
-```
-
-**Trên object2:**
-```yaml
-network:
-  version: 2
-  ethernets:
-    ens33:
-      addresses:
         - 192.168.182.198/24
       routes:
         - to: default
@@ -106,6 +88,24 @@ network:
     ens37:
       addresses:
         - 192.168.225.198/24
+```
+
+**Trên object2:**
+```yaml
+network:
+  version: 2
+  ethernets:
+    ens33:
+      addresses:
+        - 192.168.182.199/24
+      routes:
+        - to: default
+          via: 192.168.182.2
+      nameservers:
+        addresses: [8.8.8.8]
+    ens37:
+      addresses:
+        - 192.168.225.199/24
 ```
 
 ```bash
@@ -128,8 +128,8 @@ Sửa `/etc/hosts` trên **tất cả node**:
 ```
 192.168.225.195    controller
 192.168.225.196    compute1
-192.168.225.197    object1
-192.168.225.198    object2
+192.168.225.198    object1
+192.168.225.199    object2
 ```
 
 > Dùng **Management IP** (`192.168.225.x`) cho hostname, không dùng Provider IP (`192.168.182.x`).
@@ -183,12 +183,31 @@ Thực hiện trên **cả object1 và object2**:
 apt install -y xfsprogs rsync
 ```
 
-Format disk data:
+Kiểm tra disk đã được add vào VM chưa:
+
+```bash
+lsblk
+```
+
+Kết quả mong đợi:
+
+```
+sda   20G  ← OS disk
+sdb   20G  ← Swift data disk 1 (chưa có filesystem)
+sdc   20G  ← Swift data disk 2 (chưa có filesystem)
+```
+
+Format disk data với XFS:
 
 ```bash
 mkfs.xfs /dev/sdb
 mkfs.xfs /dev/sdc
 ```
+
+> **Tại sao XFS?**
+> Swift lưu metadata của object dưới dạng **extended attributes (xattr)** trực tiếp trên filesystem.
+> XFS hỗ trợ xattr tốt hơn ext4, hiệu năng cao hơn với nhiều file nhỏ - đặc trưng của object storage.
+> Docs chính thức Swift khuyến nghị XFS.
 
 Tạo mount point:
 
@@ -229,7 +248,7 @@ uid = swift
 gid = swift
 log file = /var/log/rsyncd.log
 pid file = /var/run/rsyncd.pid
-address = 192.168.225.197
+address = 192.168.225.198
 
 [account]
 max connections = 2
@@ -250,7 +269,7 @@ read only = False
 lock file = /var/lock/object.lock
 ```
 
-**Trên object2**: thay `address = 192.168.225.198`
+**Trên object2**: thay `address = 192.168.225.199`
 
 Bật rsync:
 
@@ -313,17 +332,14 @@ apt install -y swift swift-proxy python3-swiftclient \
   python3-keystoneclient python3-keystonemiddleware
 ```
 
-### 3.3 Cấu hình proxy server
+> Trên Ubuntu 24.04 dùng `python3-*` thay vì `python-*` như docs cũ.
 
-Tạo thư mục:
+### 3.3 Cấu hình proxy server
 
 ```bash
 mkdir -p /etc/swift
-```
 
-Tạo file `/etc/swift/proxy-server.conf`:
-
-```ini
+cat > /etc/swift/proxy-server.conf << 'EOF'
 [DEFAULT]
 bind_port = 8080
 user = swift
@@ -338,7 +354,7 @@ account_autocreate = True
 
 [filter:keystoneauth]
 use = egg:swift#keystoneauth
-operator_roles = admin,user
+operator_roles = admin,user,member
 
 [filter:authtoken]
 paste.filter_factory = keystonemiddleware.auth_token:filter_factory
@@ -392,6 +408,7 @@ use = egg:swift#container_quotas
 
 [filter:account-quotas]
 use = egg:swift#account_quotas
+EOF
 ```
 
 ---
@@ -402,21 +419,16 @@ use = egg:swift#account_quotas
 
 ```bash
 apt install -y swift swift-account swift-container swift-object
-```
 
-Tạo thư mục config:
-
-```bash
 mkdir -p /etc/swift
 ```
 
-Tạo file `/etc/swift/account-server.conf`:
+**Trên object1** - tạo 3 file config:
 
-**Trên object1** (thay IP cho object2):
-
-```ini
+```bash
+cat > /etc/swift/account-server.conf << 'EOF'
 [DEFAULT]
-bind_ip = 192.168.225.197
+bind_ip = 192.168.225.198
 bind_port = 6202
 user = swift
 swift_dir = /etc/swift
@@ -435,13 +447,13 @@ use = egg:swift#healthcheck
 [filter:recon]
 use = egg:swift#recon
 recon_cache_path = /var/cache/swift
+EOF
 ```
 
-Tạo file `/etc/swift/container-server.conf`:
-
-```ini
+```bash
+cat > /etc/swift/container-server.conf << 'EOF'
 [DEFAULT]
-bind_ip = 192.168.225.197
+bind_ip = 192.168.225.198
 bind_port = 6201
 user = swift
 swift_dir = /etc/swift
@@ -460,13 +472,13 @@ use = egg:swift#healthcheck
 [filter:recon]
 use = egg:swift#recon
 recon_cache_path = /var/cache/swift
+EOF
 ```
 
-Tạo file `/etc/swift/object-server.conf`:
-
-```ini
+```bash
+cat > /etc/swift/object-server.conf << 'EOF'
 [DEFAULT]
-bind_ip = 192.168.225.197
+bind_ip = 192.168.225.198
 bind_port = 6200
 user = swift
 swift_dir = /etc/swift
@@ -486,11 +498,88 @@ use = egg:swift#healthcheck
 use = egg:swift#recon
 recon_cache_path = /var/cache/swift
 recon_lock_path = /var/lock
+EOF
 ```
 
-> Trên **object2**: thay tất cả `192.168.225.197` → `192.168.225.198`
+**Trên object2** - copy nguyên 3 lệnh sau:
 
-Phân quyền:
+```bash
+cat > /etc/swift/account-server.conf << 'EOF'
+[DEFAULT]
+bind_ip = 192.168.225.199
+bind_port = 6202
+user = swift
+swift_dir = /etc/swift
+devices = /srv/node
+mount_check = True
+
+[pipeline:main]
+pipeline = healthcheck recon account-server
+
+[app:account-server]
+use = egg:swift#account
+
+[filter:healthcheck]
+use = egg:swift#healthcheck
+
+[filter:recon]
+use = egg:swift#recon
+recon_cache_path = /var/cache/swift
+EOF
+```
+
+```bash
+cat > /etc/swift/container-server.conf << 'EOF'
+[DEFAULT]
+bind_ip = 192.168.225.199
+bind_port = 6201
+user = swift
+swift_dir = /etc/swift
+devices = /srv/node
+mount_check = True
+
+[pipeline:main]
+pipeline = healthcheck recon container-server
+
+[app:container-server]
+use = egg:swift#container
+
+[filter:healthcheck]
+use = egg:swift#healthcheck
+
+[filter:recon]
+use = egg:swift#recon
+recon_cache_path = /var/cache/swift
+EOF
+```
+
+```bash
+cat > /etc/swift/object-server.conf << 'EOF'
+[DEFAULT]
+bind_ip = 192.168.225.199
+bind_port = 6200
+user = swift
+swift_dir = /etc/swift
+devices = /srv/node
+mount_check = True
+
+[pipeline:main]
+pipeline = healthcheck recon object-server
+
+[app:object-server]
+use = egg:swift#object
+
+[filter:healthcheck]
+use = egg:swift#healthcheck
+
+[filter:recon]
+use = egg:swift#recon
+recon_cache_path = /var/cache/swift
+recon_lock_path = /var/lock
+EOF
+```
+
+Phân quyền (chạy trên **cả object1 và object2**):
 
 ```bash
 chown -R swift:swift /srv/node
@@ -515,13 +604,13 @@ cd /etc/swift
 swift-ring-builder account.builder create 10 3 1
 
 swift-ring-builder account.builder add \
-  --region 1 --zone 1 --ip 192.168.225.197 --port 6202 --device sdb --weight 100
+  --region 1 --zone 1 --ip 192.168.225.198 --port 6202 --device sdb --weight 100
 swift-ring-builder account.builder add \
-  --region 1 --zone 1 --ip 192.168.225.197 --port 6202 --device sdc --weight 100
+  --region 1 --zone 1 --ip 192.168.225.198 --port 6202 --device sdc --weight 100
 swift-ring-builder account.builder add \
-  --region 1 --zone 2 --ip 192.168.225.198 --port 6202 --device sdb --weight 100
+  --region 1 --zone 2 --ip 192.168.225.199 --port 6202 --device sdb --weight 100
 swift-ring-builder account.builder add \
-  --region 1 --zone 2 --ip 192.168.225.198 --port 6202 --device sdc --weight 100
+  --region 1 --zone 2 --ip 192.168.225.199 --port 6202 --device sdc --weight 100
 
 swift-ring-builder account.builder rebalance
 ```
@@ -532,13 +621,13 @@ swift-ring-builder account.builder rebalance
 swift-ring-builder container.builder create 10 3 1
 
 swift-ring-builder container.builder add \
-  --region 1 --zone 1 --ip 192.168.225.197 --port 6201 --device sdb --weight 100
+  --region 1 --zone 1 --ip 192.168.225.198 --port 6201 --device sdb --weight 100
 swift-ring-builder container.builder add \
-  --region 1 --zone 1 --ip 192.168.225.197 --port 6201 --device sdc --weight 100
+  --region 1 --zone 1 --ip 192.168.225.198 --port 6201 --device sdc --weight 100
 swift-ring-builder container.builder add \
-  --region 1 --zone 2 --ip 192.168.225.198 --port 6201 --device sdb --weight 100
+  --region 1 --zone 2 --ip 192.168.225.199 --port 6201 --device sdb --weight 100
 swift-ring-builder container.builder add \
-  --region 1 --zone 2 --ip 192.168.225.198 --port 6201 --device sdc --weight 100
+  --region 1 --zone 2 --ip 192.168.225.199 --port 6201 --device sdc --weight 100
 
 swift-ring-builder container.builder rebalance
 ```
@@ -549,32 +638,42 @@ swift-ring-builder container.builder rebalance
 swift-ring-builder object.builder create 10 3 1
 
 swift-ring-builder object.builder add \
-  --region 1 --zone 1 --ip 192.168.225.197 --port 6200 --device sdb --weight 100
+  --region 1 --zone 1 --ip 192.168.225.198 --port 6200 --device sdb --weight 100
 swift-ring-builder object.builder add \
-  --region 1 --zone 1 --ip 192.168.225.197 --port 6200 --device sdc --weight 100
+  --region 1 --zone 1 --ip 192.168.225.198 --port 6200 --device sdc --weight 100
 swift-ring-builder object.builder add \
-  --region 1 --zone 2 --ip 192.168.225.198 --port 6200 --device sdb --weight 100
+  --region 1 --zone 2 --ip 192.168.225.199 --port 6200 --device sdb --weight 100
 swift-ring-builder object.builder add \
-  --region 1 --zone 2 --ip 192.168.225.198 --port 6200 --device sdc --weight 100
+  --region 1 --zone 2 --ip 192.168.225.199 --port 6200 --device sdc --weight 100
 
 swift-ring-builder object.builder rebalance
 ```
 
 ### 5.4 Tạo swift.conf và distribute
 
-Tạo file `/etc/swift/swift.conf`:
+Tạo file `/etc/swift/swift.conf` với hash ngẫu nhiên:
 
-```ini
+```bash
+SUFFIX=$(openssl rand -hex 10)
+PREFIX=$(openssl rand -hex 10)
+
+cat > /etc/swift/swift.conf << EOF
 [swift-hash]
-swift_hash_path_suffix = flamingo_suffix_secret
-swift_hash_path_prefix = flamingo_prefix_secret
+swift_hash_path_suffix = $SUFFIX
+swift_hash_path_prefix = $PREFIX
 
 [storage-policy:0]
 name = Policy-0
 default = yes
+EOF
+
+echo "Suffix: $SUFFIX"
+echo "Prefix: $PREFIX"
+# Lưu lại 2 giá trị này để tham khảo
 ```
 
-> Thay `flamingo_suffix_secret` và `flamingo_prefix_secret` bằng chuỗi ngẫu nhiên bí mật.
+> `swift_hash_path_suffix` và `swift_hash_path_prefix` phải **giống nhau trên tất cả node**.
+> Đây là lý do dùng `scp` để copy file này sang object nodes thay vì tạo lại.
 
 Copy ring files và swift.conf sang object nodes:
 
@@ -638,7 +737,9 @@ Tạo container và upload file:
 openstack container create test-container
 
 echo "Hello Swift" > /tmp/test-file.txt
-openstack object create test-container /tmp/test-file.txt
+
+# Dùng --name để đặt tên object không có đường dẫn
+openstack object create test-container /tmp/test-file.txt --name test-file.txt
 
 openstack object list test-container
 ```
@@ -656,7 +757,7 @@ Kết quả mong đợi:
 Download và verify:
 
 ```bash
-openstack object save test-container test-file.txt --file /tmp/downloaded.txt
+openstack object save test-container /tmp/test-file.txt --file /tmp/downloaded.txt
 cat /tmp/downloaded.txt
 # Hello Swift
 ```
@@ -670,4 +771,4 @@ openstack container delete test-container
 
 ---
 
-Trước: [09-cinder.md](09-cinder.md)
+Trước: [09-cinder.md](09-cinder.md) | Tiếp theo: [11-heat.md](11-heat.md)

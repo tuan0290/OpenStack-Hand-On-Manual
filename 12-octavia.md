@@ -227,22 +227,10 @@ sudo ip link set o-bhm0 up
 sudo ip link set dev o-hm0 address $MGMT_PORT_MAC
 sudo iptables -I INPUT -i o-hm0 -p udp --dport 5555 -j ACCEPT
 
-# Cấu hình DHCP cho o-hm0
-apt install -y isc-dhcp-client
-sudo mkdir -m755 -p /etc/dhcp/octavia
-
-# Tạo dhclient.conf (file mẫu từ octavia repo có thể không tồn tại)
-DHCLIENT_CONF=/opt/octavia/etc/dhcp/dhclient.conf
-if [ -f "$DHCLIENT_CONF" ]; then
-  sudo cp $DHCLIENT_CONF /etc/dhcp/octavia/
-else
-  sudo cat > /etc/dhcp/octavia/dhclient.conf << 'EOF'
-request subnet-mask, broadcast-address, interface-mtu;
-do-forward-updates false;
-EOF
-fi
-
-sudo dhclient -v o-hm0 -cf /etc/dhcp/octavia/dhclient.conf
+# Với OVN, dùng IP tĩnh thay vì DHCP vì o-bhm0 kết nối vào br-int
+# không qua DHCP agent thông thường
+sudo ip addr add 172.16.0.2/12 dev o-hm0
+sudo ip link set o-hm0 up
 
 echo "MGMT_PORT_MAC=$MGMT_PORT_MAC"
 echo "BRNAME=$BRNAME"
@@ -275,6 +263,7 @@ if [ "\$1" == "start" ]; then
   ip link set o-bhm0 up
   ip link set dev o-hm0 address \$MAC
   ip link set o-hm0 up
+  ip addr add 172.16.0.2/12 dev o-hm0
   iptables -I INPUT -i o-hm0 -p udp --dport 5555 -j ACCEPT
 elif [ "\$1" == "stop" ]; then
   ovs-vsctl del-port \$BRNAME o-bhm0 2>/dev/null || true

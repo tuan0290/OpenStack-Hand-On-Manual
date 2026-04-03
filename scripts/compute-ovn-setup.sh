@@ -12,6 +12,19 @@ PROVIDER_IFACE="ens33"
 CONTROLLER_MGMT_IP="192.168.225.195"
 NETPLAN_FILE="/etc/netplan/50-cloud-init.yaml"
 
+echo "=== Fix DNS - tắt systemd-resolved ghi đè ==="
+mkdir -p /etc/systemd/resolved.conf.d/
+cat > /etc/systemd/resolved.conf.d/dns.conf << 'EOF'
+[Resolve]
+DNS=8.8.8.8 8.8.4.4
+FallbackDNS=1.1.1.1
+DNSStubListener=no
+EOF
+systemctl restart systemd-resolved
+ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf
+echo "DNS fixed: $(cat /etc/resolv.conf | grep nameserver)"
+
+echo ""
 echo "=== [2.2] Khởi động OVS ==="
 systemctl start openvswitch-switch
 systemctl enable openvswitch-switch

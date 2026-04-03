@@ -667,3 +667,112 @@ echo ""
 echo "=== Recent Keystone Errors ==="
 grep -i "error\|warn\|unauthorized" /var/log/apache2/keystone.log 2>/dev/null | tail -5
 ```
+
+---
+
+## Cấu trúc Keystone
+
+```
+═══════════════════════════════════════════════════════════════════
+                    KEYSTONE ARCHITECTURE
+═══════════════════════════════════════════════════════════════════
+
+  Client (CLI/Horizon/Nova/Glance...)
+       │
+       │ HTTP POST /v3/auth/tokens
+       ▼
+  ┌─────────────────────────────────────────────────────────────┐
+  │                    APACHE HTTP Server                        │
+  │              (mod_wsgi, port 5000)                          │
+  └──────────────────────┬──────────────────────────────────────┘
+                         │
+                         ▼
+  ┌─────────────────────────────────────────────────────────────┐
+  │                  KEYSTONE APPLICATION                        │
+  │                                                             │
+  │  ┌─────────────┐  ┌──────────────┐  ┌──────────────────┐  │
+  │  │  Identity   │  │    Token     │  │    Catalog       │  │
+  │  │  Service    │  │   Service    │  │    Service       │  │
+  │  │             │  │              │  │                  │  │
+  │  │ user/group  │  │ Fernet token │  │ service/endpoint │  │
+  │  │ domain/proj │  │ create/valid │  │ region           │  │
+  │  └──────┬──────┘  └──────┬───────┘  └────────┬─────────┘  │
+  │         │                │                    │            │
+  │  ┌──────┴────────────────┴────────────────────┴─────────┐  │
+  │  │                  oslo.db (SQLAlchemy)                 │  │
+  │  └──────────────────────────────────────────────────────┘  │
+  └──────────────────────┬──────────────────────────────────────┘
+                         │
+                         ▼
+  ┌─────────────────────────────────────────────────────────────┐
+  │                    MariaDB                                   │
+  │                                                             │
+  │  user  project  role  assignment  endpoint  service  token  │
+  └─────────────────────────────────────────────────────────────┘
+
+  ┌─────────────────────────────────────────────────────────────┐
+  │                    Memcached                                 │
+  │         (cache token validation result)                     │
+  └─────────────────────────────────────────────────────────────┘
+
+  ┌─────────────────────────────────────────────────────────────┐
+  │              /etc/keystone/fernet-keys/                      │
+  │   0 (staged)   1 (secondary)   2 (secondary)   3 (primary)  │
+  └─────────────────────────────────────────────────────────────┘
+
+
+═══════════════════════════════════════════════════════════════════
+                    DATA MODEL (Quan hệ giữa các object)
+═══════════════════════════════════════════════════════════════════
+
+  Domain: Default
+  ├── Project: admin
+  │   └── Role Assignment: admin → User: admin
+  ├── Project: service
+  │   ├── Role Assignment: admin → User: nova
+  │   ├── Role Assignment: admin → User: glance
+  │   ├── Role Assignment: admin → User: neutron
+  │   └── Role Assignment: admin → User: ...
+  └── Project: demo
+      └── Role Assignment: member → User: demo
+
+  Service Catalog:
+  ├── keystone  (identity)    → endpoint: http://controller:5000/v3
+  ├── nova      (compute)     → endpoint: http://controller:8774/v2.1
+  ├── glance    (image)       → endpoint: http://controller:9292
+  ├── placement (placement)   → endpoint: http://controller:8778
+  ├── neutron   (network)     → endpoint: http://controller:9696
+  └── cinderv3  (volumev3)    → endpoint: http://controller:8776/v3/...
+
+
+═══════════════════════════════════════════════════════════════════
+                    TOKEN FLOW
+═══════════════════════════════════════════════════════════════════
+
+  User                Keystone              MariaDB         Memcached
+   │                     │                     │                │
+   │─── POST /tokens ───►│                     │                │
+   │   (user+pass+scope) │                     │                │
+   │                     │─── query user ─────►│                │
+   │                     │◄── user data ───────│                │
+   │                     │─── query roles ────►│                │
+   │                     │◄── role data ───────│                │
+   │                     │                     │                │
+   │                     │  [Fernet encrypt]   │                │
+   │                     │  token = {user_id,  │                │
+   │                     │   project_id,roles, │                │
+   │                     │   expiry}           │                │
+   │                     │                     │                │
+   │◄── token + catalog ─│                     │                │
+   │                     │                     │                │
+   │─── GET /servers ───►Nova                  │                │
+   │   (X-Auth-Token)    │                     │                │
+   │                     Nova─── validate ────►│                │
+   │                     │   (check Memcached) │◄── cache hit? ─│
+   │                     │                     │                │
+   │                     │  [Fernet decrypt]   │                │
+   │                     │  verify expiry      │                │
+   │                     │  check policy       │                │
+   │                     │                     │─── cache ─────►│
+   │◄── server list ─────Nova                  │                │
+```

@@ -183,6 +183,30 @@ Sửa file `/etc/hosts`, thêm nội dung sau:
 
 > Dùng **Management IP** (`192.168.225.x`) cho hostname. Các service OpenStack và Chrony giao tiếp qua Management network, không phải Provider IP (`192.168.182.x`).
 
+### 4.3.1 Cố định DNS - tắt systemd-resolved ghi đè
+
+Sau khi chuyển `ens33` vào OVS bridge, `systemd-resolved` có thể ghi đè `/etc/resolv.conf` về `127.0.0.53` (local DNS). Fix vĩnh viễn:
+
+```bash
+# Cấu hình systemd-resolved dùng 8.8.8.8
+mkdir -p /etc/systemd/resolved.conf.d/
+cat > /etc/systemd/resolved.conf.d/dns.conf << 'EOF'
+[Resolve]
+DNS=8.8.8.8 8.8.4.4
+FallbackDNS=1.1.1.1
+DNSStubListener=no
+EOF
+
+systemctl restart systemd-resolved
+
+# Trỏ /etc/resolv.conf về file thực thay vì stub
+ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf
+
+# Verify
+cat /etc/resolv.conf
+# Phải thấy nameserver 8.8.8.8
+```
+
 Khởi động lại máy:
 
 ```bash
@@ -394,6 +418,21 @@ Khởi động lại máy:
 
 ```bash
 reboot
+```
+
+### 5.3.1 Cố định DNS - tắt systemd-resolved ghi đè
+
+```bash
+mkdir -p /etc/systemd/resolved.conf.d/
+cat > /etc/systemd/resolved.conf.d/dns.conf << 'EOF'
+[Resolve]
+DNS=8.8.8.8 8.8.4.4
+FallbackDNS=1.1.1.1
+DNSStubListener=no
+EOF
+
+systemctl restart systemd-resolved
+ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf
 ```
 
 ### 5.4 Cài đặt NTP (Chrony) - đồng bộ từ Controller

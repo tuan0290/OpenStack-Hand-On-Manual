@@ -11,6 +11,19 @@ TUNNEL_IP="192.168.147.195"
 PROVIDER_IFACE="ens33"
 NETPLAN_FILE="/etc/netplan/50-cloud-init.yaml"
 
+echo "=== Fix DNS - tắt systemd-resolved ghi đè ==="
+mkdir -p /etc/systemd/resolved.conf.d/
+cat > /etc/systemd/resolved.conf.d/dns.conf << 'EOF'
+[Resolve]
+DNS=8.8.8.8 8.8.4.4
+FallbackDNS=1.1.1.1
+DNSStubListener=no
+EOF
+systemctl restart systemd-resolved
+ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf
+echo "DNS fixed: $(cat /etc/resolv.conf | grep nameserver)"
+
+echo ""
 echo "=== [1.4] Cấu hình netplan ==="
 chmod 600 ${NETPLAN_FILE}
 cat > ${NETPLAN_FILE} << EOF

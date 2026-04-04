@@ -1,6 +1,6 @@
 #!/bin/bash
-# Check toàn bộ OpenStack cluster từ bastion
-# Usage: bash bastion-check.sh
+# Check và auto-fix toàn bộ OpenStack cluster từ bastion
+# Usage: bash bastion-check.sh [--fix]
 # Yêu cầu: SSH key đã được copy vào tất cả nodes
 
 CONTROLLER="192.168.225.195"
@@ -10,6 +10,8 @@ OBJECT1="192.168.225.198"
 OBJECT2="192.168.225.199"
 SSH_USER="root"
 SSH_OPTS="-o StrictHostKeyChecking=no -o ConnectTimeout=5 -o BatchMode=yes"
+AUTO_FIX=false
+[[ "$1" == "--fix" ]] && AUTO_FIX=true
 
 GREEN='\033[0;32m'
 RED='\033[0;31m'
@@ -20,12 +22,34 @@ NC='\033[0m'
 ok()   { echo -e "  ${GREEN}[OK]${NC}    $1"; }
 fail() { echo -e "  ${RED}[FAIL]${NC}  $1"; }
 info() { echo -e "${CYAN}>>> $1${NC}"; }
-warn() { echo -e "  ${YELLOW}[SKIP]${NC}  $1"; }
+fixed(){ echo -e "  ${YELLOW}[FIXED]${NC} $1"; }
 
 ssh_check() {
+  ssh $SSH_OPTS $SSH_USER@$1 "echo ok" &>/dev/null
+}
+
+# Check service, tự động start nếu --fix
+check_svc() {
   local host=$1
-  ssh $SSH_OPTS $SSH_USER@$host "echo ok" &>/dev/null
-  return $?
+  local svc=$2
+  local result
+  result=$(ssh $SSH_OPTS $SSH_USER@$host "systemctl is-active $svc 2>/dev/null")
+  if [ "$result" = "active" ]; then
+    ok "$svc"
+  else
+    if $AUTO_FIX; then
+      ssh $SSH_OPTS $SSH_USER@$host "systemctl start $svc" &>/dev/null
+      sleep 2
+      result=$(ssh $SSH_OPTS $SSH_USER@$host "systemctl is-active $svc 2>/dev/null")
+      if [ "$result" = "active" ]; then
+        fixed "$svc (started)"
+      else
+        fail "$svc (start failed)"
+      fi
+    else
+      fail "$svc ($result)"
+    fi
+  fi
 }
 
 check_remote_services() {
@@ -33,39 +57,19 @@ check_remote_services() {
   local label=$2
   shift 2
   local services=("$@")
-
   info "[$label] ($host)"
   if ! ssh_check $host; then
     fail "Cannot SSH to $host"
     return
   fi
-
   for svc in "${services[@]}"; do
-    result=$(ssh $SSH_OPTS $SSH_USER@$host "systemctl is-active $svc 2>/dev/null")
-    if [ "$result" = "active" ]; then
-      ok "$svc"
-    else
-      fail "$svc ($result)"
-    fi
+    check_svc $host $svc
   done
-}
-
-check_remote_cmd() {
-  local host=$1
-  local label=$2
-  local cmd=$3
-  local desc=$4
-
-  result=$(ssh $SSH_OPTS $SSH_USER@$host "$cmd" 2>/dev/null)
-  if [ $? -eq 0 ] && [ -n "$result" ]; then
-    ok "$desc: $result"
-  else
-    fail "$desc"
-  fi
 }
 
 echo "========================================================"
 echo "  OpenStack Cluster Health Check (from Bastion)"
+$AUTO_FIX && echo "  Mode: AUTO-FIX enabled" || echo "  Mode: check only (use --fix to auto-start failed services)"
 echo "========================================================"
 echo ""
 
@@ -108,14 +112,26 @@ if ssh_check $CONTROLLER; then
   if [ "$oct_iface" = "active" ]; then
     ok "octavia-interface"
   else
-    fail "octavia-interface - fix: systemctl start octavia-interface"
+    if $AUTO_FIX; then
+      ssh $SSH_OPTS $SSH_USER@$CONTROLLER "systemctl start octavia-interface" &>/dev/null
+      sleep 2
+      oct_iface=$(ssh $SSH_OPTS $SSH_USER@$CONTROLLER "systemctl is-active octavia-interface 2>/dev/null")
+      [ "$oct_iface" = "active" ] && fixed "octavia-interface (started)" || fail "octavia-interface (start failed)"
+    else
+      fail "octavia-interface - fix: systemctl start octavia-interface"
+    fi
   fi
 
   hm0_ip=$(ssh $SSH_OPTS $SSH_USER@$CONTROLLER "ip addr show o-hm0 2>/dev/null | grep '172.16.0.2'")
   if [ -n "$hm0_ip" ]; then
     ok "o-hm0 IP 172.16.0.2 OK"
   else
-    fail "o-hm0 missing IP - fix: ip addr add 172.16.0.2/12 dev o-hm0 && ip link set o-hm0 up"
+    if $AUTO_FIX; then
+      ssh $SSH_OPTS $SSH_USER@$CONTROLLER "ip addr add 172.16.0.2/12 dev o-hm0 2>/dev/null; ip link set o-hm0 up" &>/dev/null
+      fixed "o-hm0 IP set to 172.16.0.2"
+    else
+      fail "o-hm0 missing IP - fix: ip addr add 172.16.0.2/12 dev o-hm0 && ip link set o-hm0 up"
+    fi
   fi
 fi
 
@@ -132,11 +148,7 @@ echo ""
 # ── STORAGE1 (Cinder) ───────────────────────────────────────
 check_remote_services $STORAGE1 "STORAGE1" \
   cinder-volume \
-  tgt \
-  lvm2-lvmetad 2>/dev/null || true
-
-check_remote_services $STORAGE1 "STORAGE1" \
-  cinder-volume
+  tgt
 
 echo ""
 

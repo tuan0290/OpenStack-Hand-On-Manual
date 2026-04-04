@@ -428,6 +428,7 @@ Trong section `[health_manager]`:
 bind_port = 5555
 bind_ip = 172.16.0.2
 controller_ip_port_list = 172.16.0.2:5555
+heartbeat_key = Welcome123
 ```
 
 Trong section `[controller_worker]`:
@@ -777,4 +778,87 @@ openstack hypervisor list
 
 # 4. Kiểm tra Placement
 openstack resource provider list
+```
+
+---
+
+### Health Manager báo "InvalidHMACException" / LB mãi OFFLINE
+
+Amphora gửi heartbeat UDP về health manager nhưng bị drop với lỗi HMAC mismatch.
+
+**Triệu chứng:**
+
+```
+WARNING octavia.amphorae.drivers.health.heartbeat_udp
+  Health Manager experienced an exception processing a heartbeat message
+  Exception: calculated hmac: xxx not equal to msg hmac: yyy dropping packet
+```
+
+**Nguyên nhân:**
+
+Amphora encrypt heartbeat bằng `heartbeat_key`. Nếu `octavia.conf` không có key này (để mặc định `<None>`), health manager không thể decode → drop packet → LB mãi `OFFLINE`.
+
+```
+Amphora VM
+    │ heartbeat UDP (encrypted với heartbeat_key)
+    ▼
+octavia-health-manager
+    │ decrypt với heartbeat_key từ octavia.conf
+    │
+    ├─ key khớp → xử lý heartbeat → LB ONLINE
+    └─ key không khớp → InvalidHMACException → LB OFFLINE
+```
+
+**Fix:**
+
+```bash
+# Thêm heartbeat_key vào [health_manager] section
+sed -i 's/#heartbeat_key = <None>/heartbeat_key = Welcome123/' /etc/octavia/octavia.conf
+
+# Verify
+grep heartbeat_key /etc/octavia/octavia.conf
+
+# Restart services
+systemctl restart octavia-health-manager octavia-worker
+
+# Xóa LB cũ (Amphora cũ được tạo với key khác, phải tạo lại)
+source ~/demo-openrc
+openstack loadbalancer list -f value -c id | xargs -I{} openstack loadbalancer delete --cascade {}
+sleep 20
+
+# Tạo lại LB
+openstack loadbalancer create --name lb1 --vip-subnet-id selfservice-subnet
+watch openstack loadbalancer show lb1 -f value -c provisioning_status
+```
+
+> Lưu ý: phải xóa và tạo lại LB vì Amphora VM cũ đã được tạo với key cũ (hoặc không có key). Amphora mới sẽ dùng `heartbeat_key` từ config hiện tại.
+
+---
+
+### Lỗi "Load Balancer is immutable" khi tạo Pool/Listener
+
+```
+Load Balancer xxx is immutable and cannot be updated. (HTTP 409)
+```
+
+**Nguyên nhân:** Tạo listener/pool/member trong khi LB hoặc listener đang ở trạng thái `PENDING_*`. Octavia lock LB khi đang xử lý.
+
+**Fix:** Chờ từng bước ACTIVE trước khi tạo resource tiếp theo:
+
+```bash
+# Sau khi tạo LB, chờ ACTIVE
+watch openstack loadbalancer show lb1 -f value -c provisioning_status
+
+# Sau khi tạo listener, chờ ACTIVE trước khi tạo pool
+watch openstack loadbalancer listener show listener1 -f value -c provisioning_status
+
+# Sau khi tạo pool, chờ ACTIVE trước khi thêm member
+openstack loadbalancer pool list
+# provisioning_status phải là ACTIVE
+
+# Kiểm tra toàn bộ trạng thái
+openstack loadbalancer show lb1
+openstack loadbalancer listener list
+openstack loadbalancer pool list
+openstack loadbalancer member list pool1
 ```

@@ -47,19 +47,34 @@ info "=== Placement ==="
 
 echo ""
 info "=== Nova (Controller) ==="
-check_service nova-api
+# nova-api chạy qua apache2 (wsgi)
+if systemctl is-active --quiet apache2; then
+  ok "nova-api (via apache2)"
+else
+  fail "nova-api (apache2 down)"
+fi
 check_service nova-scheduler
 check_service nova-conductor
 check_service nova-novncproxy
 
 echo ""
 info "=== Neutron (Controller) ==="
-check_service neutron-server
+# neutron-server chạy qua apache2
+if systemctl is-active --quiet apache2; then
+  ok "neutron-server (via apache2)"
+else
+  fail "neutron-server (apache2 down)"
+fi
 check_service neutron-ovn-metadata-agent
 
 echo ""
 info "=== Cinder ==="
-check_service cinder-api
+# cinder-api chạy qua apache2
+if systemctl is-active --quiet apache2; then
+  ok "cinder-api (via apache2)"
+else
+  fail "cinder-api (apache2 down)"
+fi
 check_service cinder-scheduler
 
 echo ""
@@ -72,28 +87,28 @@ check_service octavia-api
 check_service octavia-health-manager
 check_service octavia-housekeeping
 check_service octavia-worker
-check_service octavia-interface
+if systemctl is-active --quiet octavia-interface; then
+  ok "octavia-interface"
+else
+  fail "octavia-interface - fix: systemctl start octavia-interface"
+fi
 
 echo ""
-info "=== Swift ==="
+info "=== Swift (Controller/Proxy) ==="
 check_service swift-proxy
-check_service swift-account
-check_service swift-account-auditor
-check_service swift-account-reaper
-check_service swift-account-replicator
-check_service swift-container
-check_service swift-container-auditor
-check_service swift-container-replicator
-check_service swift-container-updater
-check_service swift-object
-check_service swift-object-auditor
-check_service swift-object-replicator
-check_service swift-object-updater
+
+info "  Note: swift-account/container/object chạy trên object1/object2, không phải controller"
 
 echo ""
 info "=== Heat ==="
-check_service heat-api
-check_service heat-api-cfn
+# heat-api và heat-api-cfn chạy qua apache2
+if systemctl is-active --quiet apache2; then
+  ok "heat-api (via apache2)"
+  ok "heat-api-cfn (via apache2)"
+else
+  fail "heat-api (apache2 down)"
+  fail "heat-api-cfn (apache2 down)"
+fi
 check_service heat-engine
 
 echo ""

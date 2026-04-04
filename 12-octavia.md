@@ -48,6 +48,7 @@ octavia-health-manager ───────────────────
 2. [Cài đặt và cấu hình Octavia](#2-cài-đặt-và-cấu-hình-octavia)
 3. [Kiểm tra](#3-kiểm-tra)
 4. [Lab: Tạo Load Balancer](#4-lab-tạo-load-balancer)
+5. [Lab nâng cao: Load Balancer với Web Server thực](#5-lab-nâng-cao-load-balancer-với-web-server-thực)
 
 ---
 
@@ -549,14 +550,13 @@ openstack loadbalancer member create \
   --protocol-port 80 \
   pool1
 
-# Tạo health monitor
-openstack loadbalancer healthmonitor create \
-  --delay 5 \
-  --max-retries 3 \
-  --timeout 5 \
-  --type HTTP \
-  --url-path / \
-  pool1
+# Chờ member ACTIVE
+sleep 10
+openstack loadbalancer member list pool1
+
+# Lưu ý: không tạo health monitor vì cirros không có web server
+# HTTP/TCP health check sẽ fail → member ERROR → LB trả 503
+# Không có monitor, member ở trạng thái NO_MONITOR và vẫn nhận traffic
 ```
 
 ### 4.4 Gán Floating IP
@@ -572,8 +572,27 @@ echo "Load Balancer VIP: $FIP"
 ### 4.5 Test
 
 ```bash
-# Gửi request đến LB
-curl -s http://$FIP/
+# Test kết nối đến LB VIP
+curl -v http://$FIP/ 2>&1 | head -20
+```
+
+Kết quả mong đợi với cirros backend (không có web server):
+- Nếu thấy `Connection refused` hoặc `Empty reply` → LB hoạt động đúng, đã forward đến backend, backend không có service lắng nghe port 80
+- Nếu thấy `Connection timed out` → LB chưa hoạt động, kiểm tra floating IP và security group
+
+```bash
+# Kiểm tra LB đang ONLINE
+openstack loadbalancer show lb1 -f value -c operating_status
+# Phải thấy: ONLINE
+
+# Kiểm tra Amphora VM đang chạy
+source ~/admin-openrc
+openstack server list --all-projects | grep amphora
+
+# Kiểm tra member
+source ~/demo-openrc
+openstack loadbalancer member list pool1
+# operating_status: NO_MONITOR (bình thường vì không có health monitor)
 ```
 
 ### 4.6 Dọn dẹp
@@ -581,6 +600,132 @@ curl -s http://$FIP/
 ```bash
 openstack loadbalancer delete --cascade lb1
 openstack server delete lb-backend-vm1
+openstack floating ip delete $FIP
+```
+
+---
+
+## 5. Lab nâng cao: Load Balancer với Web Server thực
+
+Lab này dùng Ubuntu VM chạy nginx để test health monitor và round-robin thực sự.
+
+> Yêu cầu: có image Ubuntu 22.04 trên Glance. Nếu chưa có, xem hướng dẫn upload image ở phần Glance.
+
+### 5.1 Upload Ubuntu image (nếu chưa có)
+
+```bash
+source ~/admin-openrc
+
+# Download Ubuntu 22.04 minimal cloud image
+wget https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img \
+  -O /tmp/ubuntu-22.04.img
+
+openstack image create --disk-format qcow2 --container-format bare \
+  --public --file /tmp/ubuntu-22.04.img ubuntu-22.04
+```
+
+### 5.2 Tạo cloud-init script cho web server
+
+```bash
+# Script tự động cài nginx và tạo trang web khi VM boot
+cat > /tmp/web-userdata.sh << 'EOF'
+#!/bin/bash
+apt-get update -y
+apt-get install -y nginx
+# Lấy hostname để phân biệt response từ mỗi VM
+echo "<h1>Hello from $(hostname)</h1>" > /var/www/html/index.html
+systemctl enable nginx
+systemctl start nginx
+EOF
+```
+
+### 5.3 Tạo 2 VM backend
+
+```bash
+source ~/demo-openrc
+NET_ID=$(openstack network show selfservice-net -f value -c id)
+
+# Tạo flavor m1.small nếu chưa có (Ubuntu cần nhiều RAM hơn cirros)
+source ~/admin-openrc
+openstack flavor show m1.small 2>/dev/null || \
+  openstack flavor create --id auto --vcpus 1 --ram 2048 --disk 10 m1.small
+source ~/demo-openrc
+
+# Tạo 2 VM
+openstack server create --flavor m1.small --image ubuntu-22.04 \
+  --nic net-id=$NET_ID --security-group my-sg \
+  --user-data /tmp/web-userdata.sh web-vm1
+
+openstack server create --flavor m1.small --image ubuntu-22.04 \
+  --nic net-id=$NET_ID --security-group my-sg \
+  --user-data /tmp/web-userdata.sh web-vm2
+
+# Chờ cả 2 VM ACTIVE
+watch openstack server list
+
+# Lấy IP
+VM1_IP=$(openstack server show web-vm1 -f value -c addresses | grep -oP '192\.168\.100\.\d+')
+VM2_IP=$(openstack server show web-vm2 -f value -c addresses | grep -oP '192\.168\.100\.\d+')
+echo "VM1: $VM1_IP  VM2: $VM2_IP"
+```
+
+### 5.4 Tạo Load Balancer
+
+```bash
+# Tạo LB
+openstack loadbalancer create --name lb-web --vip-subnet-id selfservice-subnet
+watch openstack loadbalancer show lb-web -f value -c provisioning_status
+
+# Listener
+openstack loadbalancer listener create \
+  --name listener-web --protocol HTTP --protocol-port 80 lb-web
+watch openstack loadbalancer listener show listener-web -f value -c provisioning_status
+
+# Pool
+openstack loadbalancer pool create \
+  --name pool-web --lb-algorithm ROUND_ROBIN \
+  --listener listener-web --protocol HTTP
+sleep 10
+
+# Thêm 2 member
+openstack loadbalancer member create \
+  --subnet-id selfservice-subnet --address $VM1_IP --protocol-port 80 pool-web
+sleep 5
+openstack loadbalancer member create \
+  --subnet-id selfservice-subnet --address $VM2_IP --protocol-port 80 pool-web
+sleep 10
+
+# Health monitor HTTP (nginx trả 200 OK cho GET /)
+openstack loadbalancer healthmonitor create \
+  --delay 5 --max-retries 3 --timeout 5 \
+  --type HTTP --url-path / pool-web
+```
+
+### 5.5 Gán Floating IP và test
+
+```bash
+VIP_PORT=$(openstack loadbalancer show lb-web -f value -c vip_port_id)
+FIP=$(openstack floating ip create provider-net -f value -c floating_ip_address)
+openstack floating ip set --port $VIP_PORT $FIP
+echo "LB VIP: $FIP"
+
+# Chờ member ONLINE (nginx cần vài phút để boot và start)
+watch openstack loadbalancer member list pool-web
+
+# Test round-robin - mỗi request đến VM khác nhau
+for i in {1..6}; do curl -s http://$FIP/; done
+# Output luân phiên:
+# <h1>Hello from web-vm1</h1>
+# <h1>Hello from web-vm2</h1>
+# <h1>Hello from web-vm1</h1>
+# ...
+```
+
+### 5.6 Dọn dẹp
+
+```bash
+openstack loadbalancer delete --cascade lb-web
+openstack server delete web-vm1 web-vm2
 openstack floating ip delete $FIP
 ```
 

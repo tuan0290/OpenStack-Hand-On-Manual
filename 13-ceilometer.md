@@ -83,6 +83,8 @@ EXIT;
 ```bash
 apt install -y gnocchi-api gnocchi-metricd python3-gnocchiclient
 apt install -y uwsgi-plugin-python3 uwsgi
+# Redis dùng cho coordination (cải thiện performance với nhiều worker)
+apt install -y redis-server
 ```
 
 ### 1.4 Cấu hình Gnocchi
@@ -124,6 +126,8 @@ Trong section `[storage]`:
 
 ```ini
 [storage]
+# coordination_url giúp phân chia workload giữa các worker
+coordination_url = redis://controller:6379
 file_basepath = /var/lib/gnocchi
 driver = file
 ```
@@ -131,10 +135,18 @@ driver = file
 ### 1.5 Khởi tạo và khởi động Gnocchi
 
 ```bash
+# Khởi tạo database và storage
 gnocchi-upgrade
+
+# Phân quyền thư mục storage
+chown -R gnocchi:gnocchi /var/lib/gnocchi
 
 systemctl restart gnocchi-api gnocchi-metricd
 systemctl enable gnocchi-api gnocchi-metricd
+
+# Verify
+systemctl status gnocchi-api gnocchi-metricd
+curl http://controller:8041/
 ```
 
 ---
@@ -172,6 +184,8 @@ publishers:
     - gnocchi://?filter_project=service&archive_policy=low
 ```
 
+> Nếu không có file `pipeline.yaml`, kiểm tra `/etc/ceilometer/polling.yaml` - từ 2024.x trở đi Ceilometer tách polling config riêng. File `pipeline.yaml` vẫn dùng cho publishers.
+
 Sửa file `/etc/ceilometer/ceilometer.conf`:
 
 Trong section `[DEFAULT]`:
@@ -199,8 +213,16 @@ region_name = RegionOne
 ### 2.4 Khởi tạo Ceilometer resources trong Gnocchi
 
 ```bash
+# Gnocchi phải đang chạy trước khi chạy lệnh này
 ceilometer-upgrade
 ```
+
+> Nếu gặp lỗi `ceilometer-upgrade: command not found`, dùng:
+> ```bash
+> ceilometer-agent-notification --config-file /etc/ceilometer/ceilometer.conf &
+> # hoặc
+> python3 -m ceilometer.cmd.agent_notification --config-file /etc/ceilometer/ceilometer.conf
+> ```
 
 ### 2.5 Khởi động service
 
@@ -376,11 +398,15 @@ systemctl enable aodh-api aodh-evaluator aodh-notifier aodh-listener
 ```bash
 source ~/admin-openrc
 
-# Kiểm tra Gnocchi
+# Kiểm tra Gnocchi API
+curl http://controller:8041/
 openstack metric status
 
-# Kiểm tra resource types
+# Kiểm tra resource types đã được tạo bởi ceilometer-upgrade
 openstack metric resource-type list
+
+# Kiểm tra Ceilometer đang thu thập metrics (chờ 1-2 phút sau khi start)
+openstack metric resource list --type instance
 
 # Kiểm tra Aodh
 openstack alarm list

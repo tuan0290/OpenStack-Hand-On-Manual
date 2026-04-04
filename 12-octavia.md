@@ -488,63 +488,63 @@ openstack loadbalancer provider list
 
 ## 4. Lab: Tạo Load Balancer
 
-### 4.1 Kiểm tra instance đã có sẵn
+Lab này tạo 1 VM backend chạy web server đơn giản, sau đó đặt Load Balancer phía trước.
+
+### 4.1 Tạo VM backend
 
 ```bash
 source ~/demo-openrc
 
-# Xem các instance đang chạy
-openstack server list
-
-# Lấy IP của 2 instance (dùng instance đã tạo từ lab trước)
-# Thay tên instance cho phù hợp với lab của bạn
-VM1_IP=$(openstack server show my-first-instance -f value -c addresses | grep -oP '192\.168\.100\.\d+' | head -1)
-echo "VM1 IP: $VM1_IP"
-
-# Nếu chỉ có 1 instance, tạo thêm 1 cái nữa
-NET_ID=$(openstack network list --name selfservice-net -f value -c ID)
+# Tạo VM backend chạy cirros
+NET_ID=$(openstack network show selfservice-net -f value -c id)
 openstack server create --flavor m1.tiny --image cirros \
-  --nic net-id=$NET_ID --security-group my-sg lb-backend-vm2
+  --nic net-id=$NET_ID --security-group my-sg lb-backend-vm1
 
-VM2_IP=$(openstack server show heat-test-vm -f value -c addresses | grep -oP '192\.168\.100\.\d+' | head -1)
-echo "VM2 IP: $VM2_IP"
+# Chờ VM ACTIVE
+openstack server show lb-backend-vm1 -f value -c status
+
+# Lấy IP
+VM1_IP=$(openstack server show lb-backend-vm1 -f value -c addresses | grep -oP '192\.168\.100\.\d+')
+echo "VM1 IP: $VM1_IP"
 ```
 
 ### 4.2 Tạo Load Balancer
 
 ```bash
-# Tạo LB trên selfservice-net
+# Tạo LB - Octavia sẽ tạo Amphora VM (mất 1-2 phút)
 openstack loadbalancer create \
   --name lb1 \
   --vip-subnet-id selfservice-subnet
 
-# Chờ ACTIVE
+# Chờ ACTIVE (theo dõi realtime)
 watch openstack loadbalancer show lb1 -f value -c provisioning_status
+# Khi thấy ACTIVE → Ctrl+C
+```
 
-# Tạo listener (port 80)
+### 4.3 Tạo Listener, Pool và Member
+
+```bash
+# Tạo listener HTTP port 80
 openstack loadbalancer listener create \
   --name listener1 \
   --protocol HTTP \
   --protocol-port 80 \
   lb1
 
-# Tạo pool (round-robin)
+# Chờ listener ACTIVE
+openstack loadbalancer listener show listener1 -f value -c provisioning_status
+
+# Tạo pool
 openstack loadbalancer pool create \
   --name pool1 \
   --lb-algorithm ROUND_ROBIN \
   --listener listener1 \
   --protocol HTTP
 
-# Thêm member vào pool (dùng IP của 2 VM đã có)
+# Thêm VM vào pool
 openstack loadbalancer member create \
   --subnet-id selfservice-subnet \
   --address $VM1_IP \
-  --protocol-port 80 \
-  pool1
-
-openstack loadbalancer member create \
-  --subnet-id selfservice-subnet \
-  --address $VM2_IP \
   --protocol-port 80 \
   pool1
 
@@ -558,35 +558,28 @@ openstack loadbalancer healthmonitor create \
   pool1
 ```
 
-### 4.3 Gán Floating IP cho Load Balancer
+### 4.4 Gán Floating IP
 
 ```bash
-# Lấy VIP port của LB
 VIP_PORT=$(openstack loadbalancer show lb1 -f value -c vip_port_id)
-
-# Tạo và gán floating IP
 FIP=$(openstack floating ip create provider-net -f value -c floating_ip_address)
 openstack floating ip set --port $VIP_PORT $FIP
 
-echo "Load Balancer accessible at: $FIP"
+echo "Load Balancer VIP: $FIP"
 ```
 
-### 4.4 Test
+### 4.5 Test
 
 ```bash
-# Test từ controller
-for i in {1..6}; do
-  curl -s http://$FIP/ | head -1
-done
-# Sẽ thấy response luân phiên từ web1 và web2
+# Gửi request đến LB
+curl -s http://$FIP/
 ```
 
-### 4.5 Dọn dẹp
+### 4.6 Dọn dẹp
 
 ```bash
 openstack loadbalancer delete --cascade lb1
-# Chỉ xóa VM tạo thêm cho lab này, giữ lại instance cũ
-openstack server delete lb-backend-vm2 2>/dev/null || true
+openstack server delete lb-backend-vm1
 openstack floating ip delete $FIP
 ```
 

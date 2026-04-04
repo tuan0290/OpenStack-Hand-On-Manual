@@ -149,14 +149,34 @@ openstack image create --disk-format qcow2 --container-format bare \
   --file /tmp/amphora-x64-haproxy.qcow2 amphora-x64-haproxy
 ```
 
-Tạo flavor cho Amphora:
+Tạo flavor cho Amphora và gán cho project service:
 
 ```bash
 source ~/admin-openrc
 
 openstack flavor create --id 200 --vcpus 1 --ram 1024 \
   --disk 2 "amphora" --private
+
+# Bắt buộc: gán flavor cho project service
+# Nếu không, Nova sẽ báo "No valid host was found" khi tạo Amphora VM
+SERVICE_PROJECT_ID=$(openstack project show service -f value -c id)
+openstack flavor set 200 --project $SERVICE_PROJECT_ID
+
+# Verify - access_project_ids phải có giá trị, KHÔNG được rỗng []
+openstack flavor show 200 | grep access_project_ids
 ```
+
+> **Lưu ý quan trọng**: Nếu `access_project_ids` vẫn hiển thị `[]` sau khi chạy lệnh trên, dùng Nova API trực tiếp:
+>
+> ```bash
+> # Lấy token và gán flavor access qua Nova API
+> SERVICE_PROJECT_ID=$(openstack project show service -f value -c id)
+> nova flavor-access-add 200 $SERVICE_PROJECT_ID
+>
+> # Verify lại
+> nova flavor-access-list --flavor 200
+> # Phải thấy project service trong danh sách
+> ```
 
 ### 1.5 Tạo certificates
 
@@ -231,6 +251,13 @@ sudo iptables -I INPUT -i o-hm0 -p udp --dport 5555 -j ACCEPT
 # không qua DHCP agent thông thường
 sudo ip addr add 172.16.0.2/12 dev o-hm0
 sudo ip link set o-hm0 up
+
+# Quan trọng: set iface-id để OVN nhận diện port và forward traffic đúng
+PORT_ID=$(openstack port show octavia-health-manager-listen-port -f value -c id)
+ovs-vsctl set Interface o-bhm0 external-ids:iface-id=$PORT_ID
+
+# Verify kết nối (sau khi tạo LB, Amphora VM sẽ có IP trong 172.16.x.x)
+# ping -c 2 <amphora-ip>
 
 echo "MGMT_PORT_MAC=$MGMT_PORT_MAC"
 echo "BRNAME=$BRNAME"
@@ -566,3 +593,195 @@ openstack floating ip delete $FIP
 ---
 
 Trước: [11-heat.md](11-heat.md) | Tiếp theo: [13-ceilometer.md](13-ceilometer.md)
+
+---
+
+## Hỏi & Đáp
+
+### Tại sao o-hm0 không kết nối được Amphora VM dù đã add vào br-int?
+
+Đây là vấn đề thực tế gặp phải khi dùng OVN thay vì linuxbridge.
+
+**Vấn đề:**
+
+```
+Controller
+┌─────────────────────────────────────────────────────────┐
+│                                                         │
+│  o-hm0 (172.16.0.2) ←→ o-bhm0                         │
+│                              │                          │
+│                    ovs-vsctl add-port br-int o-bhm0     │
+│                              │                          │
+│                         ┌────┴────┐                     │
+│                         │ br-int  │  ← OVN managed      │
+│                         └────┬────┘                     │
+│                              │                          │
+│                    ⚠ OVN không biết o-bhm0              │
+│                      thuộc network nào!                 │
+│                      → không forward traffic            │
+└─────────────────────────────────────────────────────────┘
+
+Amphora VM (172.16.1.9) ← không reachable
+```
+
+**Nguyên nhân gốc rễ:**
+
+OVN quản lý forwarding dựa trên **Logical Switch Port** trong NB DB. Khi `ovs-vsctl add-port br-int o-bhm0`, OVS biết port này tồn tại nhưng OVN không biết port này map với Neutron port nào → không tạo flow để forward traffic.
+
+**Giải pháp:**
+
+```
+Controller
+┌─────────────────────────────────────────────────────────┐
+│                                                         │
+│  o-hm0 (172.16.0.2) ←→ o-bhm0                         │
+│                              │                          │
+│                    ovs-vsctl set Interface o-bhm0 \     │
+│                      external-ids:iface-id=<PORT_ID>   │
+│                              │                          │
+│                         ┌────┴────┐                     │
+│                         │ br-int  │                     │
+│                         └────┬────┘                     │
+│                              │                          │
+│                    ✓ OVN biết o-bhm0 = Neutron port     │
+│                      octavia-health-manager-listen-port │
+│                      → tạo flow forward traffic         │
+└─────────────────────────────────────────────────────────┘
+
+Amphora VM (172.16.1.9) ← reachable ✓
+```
+
+**Cơ chế hoạt động:**
+
+```
+ovs-vsctl set Interface o-bhm0 external-ids:iface-id=<PORT_ID>
+                │
+                │ OVN controller đọc external-ids
+                ▼
+OVN SB DB: binding port <PORT_ID> → chassis controller, interface o-bhm0
+                │
+                │ ovn-controller push flows
+                ▼
+br-int flows: traffic đến/từ 172.16.0.2 ↔ lb-mgmt-net được forward đúng
+```
+
+**Lệnh fix:**
+
+```bash
+PORT_ID=$(openstack port show octavia-health-manager-listen-port -f value -c id)
+ovs-vsctl set Interface o-bhm0 external-ids:iface-id=$PORT_ID
+```
+
+Đây là bước **bắt buộc** khi dùng OVN. Với linuxbridge (docs cũ), bước này không cần vì linuxbridge dùng cơ chế khác.
+
+---
+
+### Nova báo "No valid host was found" khi tạo Amphora VM
+
+Đây là lỗi phổ biến nhất khi cài Octavia. Nova scheduler từ chối tạo VM cho Amphora.
+
+**Sơ đồ luồng lỗi:**
+
+```
+octavia-worker
+    │ yêu cầu tạo Amphora VM
+    ▼
+Nova API → Nova Conductor → Nova Scheduler
+                                  │
+                          kiểm tra từng filter
+                                  │
+                    ┌─────────────┼─────────────┐
+                    ▼             ▼             ▼
+             FlavorFilter  ResourceFilter  AggregateFilter
+                    │             │             │
+              flavor 200    VCPU/RAM/Disk   host aggregate
+              accessible?   đủ không?       match không?
+                    │
+              ⚠ FAILED ← access_project_ids = [] (rỗng)
+                    │
+                    ▼
+        NoValidHost exception → octavia-worker nhận lỗi
+```
+
+**Nguyên nhân #1 (phổ biến nhất): Flavor chưa được gán đúng cho project service**
+
+```bash
+# Kiểm tra
+openstack flavor show 200 | grep access_project_ids
+# Nếu thấy: access_project_ids | []  ← ĐÂY LÀ VẤN ĐỀ
+```
+
+`openstack flavor set 200 --project $SERVICE_PROJECT_ID` đôi khi không hoạt động đúng. Dùng nova CLI thay thế:
+
+```bash
+source ~/admin-openrc
+SERVICE_PROJECT_ID=$(openstack project show service -f value -c id)
+
+# Dùng nova CLI (đáng tin cậy hơn)
+nova flavor-access-add 200 $SERVICE_PROJECT_ID
+
+# Verify
+nova flavor-access-list --flavor 200
+# Phải thấy project service trong danh sách
+```
+
+**Nguyên nhân #2: Placement không có đủ inventory**
+
+```bash
+# Lấy UUID của compute1
+COMPUTE_UUID=$(openstack resource provider list -f value -c uuid --name compute1)
+
+# Kiểm tra inventory
+openstack resource provider inventory list $COMPUTE_UUID
+
+# Kiểm tra usage hiện tại
+openstack resource provider usage show $COMPUTE_UUID
+```
+
+Nếu `VCPU`, `MEMORY_MB`, hoặc `DISK_GB` đã dùng hết → cần giải phóng tài nguyên hoặc tăng capacity.
+
+**Nguyên nhân #3: IDs trong octavia.conf không còn hợp lệ**
+
+```bash
+source ~/admin-openrc
+
+# So sánh với giá trị trong /etc/octavia/octavia.conf
+echo "=== amp_image_owner_id ==="
+openstack project show service -f value -c id
+
+echo "=== amp_secgroup_list ==="
+openstack security group show lb-mgmt-sec-grp -f value -c id
+
+echo "=== amp_boot_network_list ==="
+openstack network show lb-mgmt-net -f value -c id
+```
+
+Nếu có ID nào khác với trong `octavia.conf` → cập nhật file và restart:
+
+```bash
+systemctl restart octavia-worker
+```
+
+**Nguyên nhân #4: Amphora image không accessible với octavia user**
+
+```bash
+source ~/octavia-openrc
+openstack image list | grep amphora
+# Nếu không thấy → image chưa được tag hoặc owner sai
+```
+
+**Quy trình debug nhanh:**
+
+```bash
+# 1. Kiểm tra Nova scheduler log
+tail -50 /var/log/nova/nova-scheduler.log | grep -i "filter\|NoValid\|reject"
+
+# 2. Kiểm tra flavor access
+nova flavor-access-list --flavor 200
+
+# 3. Kiểm tra compute node up
+openstack hypervisor list
+
+# 4. Kiểm tra Placement
+openstack resource provider list
+```

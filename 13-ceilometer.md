@@ -186,14 +186,8 @@ apt install -y ceilometer-agent-notification ceilometer-agent-central
 
 ### 2.3 Cấu hình Ceilometer
 
-Sửa file `/etc/ceilometer/pipeline.yaml`, tìm section `publishers` và cấu hình Gnocchi:
-
-```yaml
-publishers:
-    - gnocchi://?filter_project=service&archive_policy=low
-```
-
-> Nếu không có file `pipeline.yaml`, kiểm tra `/etc/ceilometer/polling.yaml` - từ 2024.x trở đi Ceilometer tách polling config riêng. File `pipeline.yaml` vẫn dùng cho publishers.
+> Từ OpenStack 2024.x trở đi, `pipeline.yaml` đã bị bỏ. Publisher config chuyển vào `ceilometer.conf`.
+> File `polling.yaml` vẫn còn nhưng chỉ dùng để cấu hình polling interval và meters.
 
 Sửa file `/etc/ceilometer/ceilometer.conf`:
 
@@ -217,6 +211,30 @@ username = ceilometer
 password = Welcome123
 interface = internalURL
 region_name = RegionOne
+```
+
+Trong section `[publisher]` (thay thế cho pipeline.yaml):
+
+```ini
+[publisher]
+telemetry_secret = Welcome123
+```
+
+Trong section `[publisher_gnocchi]`:
+
+```ini
+[publisher_gnocchi]
+filter_project = service
+archive_policy = low
+```
+
+Trong section `[dispatcher_gnocchi]`:
+
+```ini
+[dispatcher_gnocchi]
+filter_project = service
+archive_policy = low
+url = http://controller:8041
 ```
 
 ### 2.4 Khởi tạo Ceilometer resources trong Gnocchi

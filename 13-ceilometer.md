@@ -81,23 +81,18 @@ EXIT;
 ### 1.3 Cài đặt Gnocchi
 
 ```bash
-apt install -y gnocchi-api gnocchi-metricd python3-gnocchiclient
+# DEBIAN_FRONTEND=noninteractive để bỏ qua tất cả câu hỏi debconf
+DEBIAN_FRONTEND=noninteractive apt install -y gnocchi-api gnocchi-metricd python3-gnocchiclient
 apt install -y uwsgi-plugin-python3 uwsgi
 # Redis dùng cho coordination (cải thiện performance với nhiều worker)
 apt install -y redis-server
 ```
 
-Trong quá trình cài, `apt` sẽ hỏi cấu hình database qua **dbconfig-common**:
-
-```
-Configure database for gnocchi-common with dbconfig-common? → No
-```
-
-> Chọn **No** vì đã tạo database thủ công ở bước 1.2. Nếu lỡ chọn Yes → chọn **mysql** và điền:
-> - Database host: `controller`
-> - Database name: `gnocchi`
-> - Database user: `gnocchi`
-> - Database password: `Welcome123`
+> Nếu không dùng `DEBIAN_FRONTEND=noninteractive`, apt sẽ hỏi nhiều câu - trả lời **no** cho tất cả:
+> - `Configure database for gnocchi-common with dbconfig-common?` → **no**
+> - `Set up a database for this package?` → **no**
+> - `Manage keystone_authtoken with debconf?` → **no**
+> - Các câu hỏi khác → **no**
 
 ### 1.4 Cấu hình Gnocchi
 

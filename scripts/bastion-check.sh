@@ -113,7 +113,13 @@ if ssh_check $CONTROLLER; then
     ok "octavia-interface"
   else
     if $AUTO_FIX; then
-      ssh $SSH_OPTS $SSH_USER@$CONTROLLER "systemctl start octavia-interface" &>/dev/null
+      # Xóa interface cũ trước (tránh lỗi "File exists" khi start)
+      ssh $SSH_OPTS $SSH_USER@$CONTROLLER "
+        ip link del o-hm0 2>/dev/null || true
+        ovs-vsctl del-port br-int o-bhm0 2>/dev/null || true
+        sleep 1
+        systemctl start octavia-interface
+      " &>/dev/null
       sleep 2
       oct_iface=$(ssh $SSH_OPTS $SSH_USER@$CONTROLLER "systemctl is-active octavia-interface 2>/dev/null")
       [ "$oct_iface" = "active" ] && fixed "octavia-interface (started)" || fail "octavia-interface (start failed)"

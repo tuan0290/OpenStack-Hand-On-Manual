@@ -153,18 +153,32 @@ check_remote_services $STORAGE1 "STORAGE1" \
 echo ""
 
 # ── OBJECT1 (Swift) ─────────────────────────────────────────
-check_remote_services $OBJECT1 "OBJECT1" \
-  swift-account swift-account-auditor swift-account-reaper swift-account-replicator \
+SWIFT_SERVICES="swift-account swift-account-auditor swift-account-reaper swift-account-replicator \
   swift-container swift-container-auditor swift-container-replicator swift-container-updater \
-  swift-object swift-object-auditor swift-object-replicator swift-object-updater
+  swift-object swift-object-auditor swift-object-replicator swift-object-updater"
+
+info "[OBJECT1] ($OBJECT1) - starting Swift services"
+if ssh_check $OBJECT1; then
+  ssh $SSH_OPTS $SSH_USER@$OBJECT1 "systemctl start $SWIFT_SERVICES" &>/dev/null
+  echo "  Waiting 5s for services to start..."
+  sleep 5
+  check_remote_services $OBJECT1 "OBJECT1" $SWIFT_SERVICES
+else
+  fail "Cannot SSH to $OBJECT1"
+fi
 
 echo ""
 
 # ── OBJECT2 (Swift) ─────────────────────────────────────────
-check_remote_services $OBJECT2 "OBJECT2" \
-  swift-account swift-account-auditor swift-account-reaper swift-account-replicator \
-  swift-container swift-container-auditor swift-container-replicator swift-container-updater \
-  swift-object swift-object-auditor swift-object-replicator swift-object-updater
+info "[OBJECT2] ($OBJECT2) - starting Swift services"
+if ssh_check $OBJECT2; then
+  ssh $SSH_OPTS $SSH_USER@$OBJECT2 "systemctl start $SWIFT_SERVICES" &>/dev/null
+  echo "  Waiting 5s for services to start..."
+  sleep 5
+  check_remote_services $OBJECT2 "OBJECT2" $SWIFT_SERVICES
+else
+  fail "Cannot SSH to $OBJECT2"
+fi
 
 echo ""
 
@@ -177,6 +191,7 @@ if ssh_check $CONTROLLER; then
     "source ~/admin-openrc && openstack network agent list -f value -c Alive | grep -c True"
     "source ~/admin-openrc && openstack volume service list -f value -c State | grep -c up"
     "source ~/admin-openrc && openstack loadbalancer list 2>/dev/null | wc -l"
+    "source ~/admin-openrc && swift stat 2>/dev/null | grep 'Account:' | awk '{print \$2}'"
   )
   descs=(
     "Keystone token"
@@ -184,6 +199,7 @@ if ssh_check $CONTROLLER; then
     "Neutron agents alive"
     "Cinder volume services up"
     "Octavia LB count"
+    "Swift account"
   )
   for i in "${!cmds[@]}"; do
     result=$(ssh $SSH_OPTS $SSH_USER@$CONTROLLER "bash -c '${cmds[$i]}'" 2>/dev/null)

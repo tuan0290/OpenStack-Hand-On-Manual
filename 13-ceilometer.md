@@ -87,6 +87,18 @@ apt install -y uwsgi-plugin-python3 uwsgi
 apt install -y redis-server
 ```
 
+Trong quá trình cài, `apt` sẽ hỏi cấu hình database qua **dbconfig-common**:
+
+```
+Configure database for gnocchi-common with dbconfig-common? → No
+```
+
+> Chọn **No** vì đã tạo database thủ công ở bước 1.2. Nếu lỡ chọn Yes → chọn **mysql** và điền:
+> - Database host: `controller`
+> - Database name: `gnocchi`
+> - Database user: `gnocchi`
+> - Database password: `Welcome123`
+
 ### 1.4 Cấu hình Gnocchi
 
 Sửa file `/etc/gnocchi/gnocchi.conf`:

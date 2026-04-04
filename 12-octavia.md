@@ -286,6 +286,10 @@ set -ex
 MAC=$MGMT_PORT_MAC
 BRNAME=$BRNAME
 if [ "\$1" == "start" ]; then
+  # Xóa interface cũ nếu đã tồn tại (idempotent)
+  ip link del o-hm0 2>/dev/null || true
+  ovs-vsctl del-port \$BRNAME o-bhm0 2>/dev/null || true
+  sleep 1
   ip link add o-hm0 type veth peer name o-bhm0
   ovs-vsctl add-port \$BRNAME o-bhm0
   ip link set o-bhm0 up

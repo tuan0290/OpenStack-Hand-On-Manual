@@ -84,7 +84,10 @@ check_remote_services $CONTROLLER "CONTROLLER" \
   cinder-scheduler \
   octavia-api octavia-health-manager octavia-housekeeping octavia-worker \
   swift-proxy \
-  heat-engine
+  heat-engine \
+  gnocchi-metricd \
+  ceilometer-agent-central ceilometer-agent-notification \
+  aodh-api aodh-evaluator aodh-notifier aodh-listener
 
 # Check apache2-based services riêng
 info "[CONTROLLER] API services via Apache"

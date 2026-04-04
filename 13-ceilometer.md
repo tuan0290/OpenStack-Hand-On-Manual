@@ -148,12 +148,14 @@ gnocchi-upgrade
 # Phân quyền thư mục storage
 chown -R gnocchi:gnocchi /var/lib/gnocchi
 
-systemctl restart gnocchi-api gnocchi-metricd
-systemctl enable gnocchi-api gnocchi-metricd
+# Lưu ý: trên Ubuntu 24.04, gnocchi-api không có systemd unit riêng
+# API chạy cùng trong gnocchi-metricd
+systemctl restart gnocchi-metricd
+systemctl enable gnocchi-metricd
 
-# Verify
-systemctl status gnocchi-api gnocchi-metricd
+# Verify API đang hoạt động
 curl http://controller:8041/
+# Phải trả về JSON response
 ```
 
 ---

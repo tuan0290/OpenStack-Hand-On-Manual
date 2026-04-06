@@ -8,6 +8,9 @@ COMPUTE1="192.168.225.196"
 STORAGE1="192.168.225.197"
 OBJECT1="192.168.225.198"
 OBJECT2="192.168.225.199"
+CEPH_MON1="192.168.225.202"
+CEPH_OSD1="192.168.225.203"
+CEPH_OSD2="192.168.225.204"
 SSH_USER="root"
 SSH_OPTS="-o StrictHostKeyChecking=no -o ConnectTimeout=5 -o BatchMode=yes"
 AUTO_FIX=false
@@ -189,6 +192,44 @@ if ssh_check $OBJECT2; then
   check_remote_services $OBJECT2 "OBJECT2" $SWIFT_SERVICES
 else
   fail "Cannot SSH to $OBJECT2"
+fi
+
+echo ""
+
+# ── CEPH CLUSTER ────────────────────────────────────────────
+info "[CEPH] Ceph cluster nodes"
+for entry in "$CEPH_MON1:ceph-mon1" "$CEPH_OSD1:ceph-osd1" "$CEPH_OSD2:ceph-osd2"; do
+  host="${entry%%:*}"
+  name="${entry##*:}"
+  if ! ssh_check $host; then
+    fail "$name ($host) - cannot SSH"
+    continue
+  fi
+  # Check ceph services theo node type
+  if [[ "$name" == "ceph-mon1" ]]; then
+    for svc in ceph-mon@ceph-mon1 ceph-mgr@ceph-mon1; do
+      result=$(ssh $SSH_OPTS $SSH_USER@$host "systemctl is-active '$svc' 2>/dev/null")
+      [ "$result" = "active" ] && ok "$name: $svc" || fail "$name: $svc ($result)"
+    done
+  else
+    osd_id=$(ssh $SSH_OPTS $SSH_USER@$host "ls /var/lib/ceph/osd/ 2>/dev/null | head -1 | sed 's/ceph-//'")
+    if [ -n "$osd_id" ]; then
+      result=$(ssh $SSH_OPTS $SSH_USER@$host "systemctl is-active 'ceph-osd@$osd_id' 2>/dev/null")
+      [ "$result" = "active" ] && ok "$name: ceph-osd@$osd_id" || fail "$name: ceph-osd@$osd_id ($result)"
+    else
+      fail "$name: no OSD found"
+    fi
+  fi
+done
+
+# Ceph cluster health từ mon1
+if ssh_check $CEPH_MON1; then
+  health=$(ssh $SSH_OPTS $SSH_USER@$CEPH_MON1 "ceph health 2>/dev/null")
+  if echo "$health" | grep -q "HEALTH_OK"; then
+    ok "Ceph cluster: $health"
+  else
+    fail "Ceph cluster: $health"
+  fi
 fi
 
 echo ""

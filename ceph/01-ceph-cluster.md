@@ -99,6 +99,19 @@ hostnamectl set-hostname ceph-osd2
 
 ### 2.2 Cấu hình /etc/hosts trên tất cả nodes
 
+Trên **bastion** - thêm Ceph nodes vào hosts:
+
+```bash
+cat >> /etc/hosts << 'EOF'
+# Ceph cluster
+192.168.225.202   ceph-mon1
+192.168.225.203   ceph-osd1
+192.168.225.204   ceph-osd2
+EOF
+```
+
+Trên **ceph-mon1, ceph-osd1, ceph-osd2** - thêm toàn bộ cluster:
+
 ```bash
 cat >> /etc/hosts << 'EOF'
 # Ceph cluster

@@ -364,7 +364,7 @@ apt install -y ceilometer-agent-compute
 
 # Cấu hình giống compute1
 cp /etc/ceilometer/ceilometer.conf /etc/ceilometer/ceilometer.conf.bak
-# Sửa transport_url và service_credentials như trong 13-ceilometer.md
+# Sửa transport_url và service_credentials như trong 14-ceilometer.md
 
 systemctl restart ceilometer-agent-compute nova-compute
 systemctl enable ceilometer-agent-compute
@@ -443,4 +443,4 @@ openstack server delete test-compute2
 
 ---
 
-Trước: [13-ceilometer.md](13-ceilometer.md)
+Trước: [12-octavia.md](12-octavia.md) | Tiếp theo: [14-ceilometer.md](14-ceilometer.md)

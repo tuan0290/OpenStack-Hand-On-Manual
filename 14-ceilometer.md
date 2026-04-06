@@ -1,5 +1,7 @@
 # Cài đặt Telemetry (Ceilometer + Gnocchi + Aodh)
 
+> **Lưu ý:** Cài đặt Ceilometer sau cùng, sau khi toàn bộ các service khác đã hoạt động ổn định (bao gồm cả việc add compute node mới nếu có). Ceilometer cần thu thập metrics từ tất cả nodes nên cần cài agent trên mọi compute node trước khi bắt đầu.
+
 > Telemetry stack gồm 3 service phối hợp:
 > - **Ceilometer**: thu thập metrics từ các service OpenStack
 > - **Gnocchi**: lưu trữ và query time-series metrics
@@ -521,4 +523,4 @@ openstack alarm delete cpu-high-alarm
 
 ---
 
-Trước: [12-octavia.md](12-octavia.md)
+Trước: [13-add-compute-node.md](13-add-compute-node.md)

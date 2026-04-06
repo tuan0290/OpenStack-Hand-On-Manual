@@ -735,7 +735,7 @@ openstack floating ip delete $FIP
 
 ---
 
-Trước: [11-heat.md](11-heat.md) | Tiếp theo: [13-ceilometer.md](13-ceilometer.md)
+Trước: [11-heat.md](11-heat.md) | Tiếp theo: [13-add-compute-node.md](13-add-compute-node.md)
 
 ---
 

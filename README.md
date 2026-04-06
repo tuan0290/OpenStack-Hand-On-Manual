@@ -60,38 +60,33 @@ OpenStack-Manual/
 ├── 10-swift.md                 → Controller + Object1 + Object2
 ├── 11-heat.md                  → Controller
 ├── 12-octavia.md               → Controller
-├── 13-ceilometer.md            → Controller + Compute
+├── 13-add-compute-node.md      → Compute2 (tùy chọn)
+├── 14-ceilometer.md            → Controller + All Compute (cài sau cùng)
 ├── scripts/
 │   ├── controller-ovn-setup.sh
-│   └── compute-ovn-setup.sh
+│   ├── compute-ovn-setup.sh
+│   ├── bastion-check.sh        → check toàn bộ cluster từ bastion
+│   └── sync-ntp.sh             → sync NTP sau reboot/snapshot
 └── knowledge/
-    ├── README.md
-    ├── 01-mariadb.md
-    ├── 02-rabbitmq.md
-    ├── 03-memcached.md
-    ├── 04-keystone-deep-dive.md
-    ├── 05-glance-deep-dive.md
-    ├── 06-placement-deep-dive.md
-    ├── 07-nova-deep-dive.md
-    ├── 08-neutron-ovn-deep-dive.md
-    └── 09-horizon-deep-dive.md
+    └── ...
 ```
 
-| File | Service | Node |
-|---|---|---|
-| [01-environment-prepare.md](01-environment-prepare.md) | Chuẩn bị môi trường, MariaDB, RabbitMQ, Memcached | Controller + Compute |
-| [02-keystone.md](02-keystone.md) | Identity Service | Controller |
-| [03-glance.md](03-glance.md) | Image Service | Controller |
-| [04-placement.md](04-placement.md) | Placement API | Controller |
-| [05-nova.md](05-nova.md) | Compute Service | Controller + Compute |
-| [06-neutron.md](06-neutron.md) | Networking Service (OVN) | Controller + Compute |
-| [07-launch-instance.md](07-launch-instance.md) | Tạo instance đầu tiên | Controller |
-| [08-horizon.md](08-horizon.md) | Dashboard | Controller |
-| [09-cinder.md](09-cinder.md) | Block Storage (LVM) | Controller + Storage1 |
-| [10-swift.md](10-swift.md) | Object Storage | Controller + Object1 + Object2 |
-| [11-heat.md](11-heat.md) | Orchestration | Controller |
-| [12-octavia.md](12-octavia.md) | Load Balancer (LBaaS) | Controller |
-| [13-ceilometer.md](13-ceilometer.md) | Telemetry (Ceilometer + Gnocchi + Aodh) | Controller + Compute |
+| File | Service | Node | Ghi chú |
+|---|---|---|---|
+| [01-environment-prepare.md](01-environment-prepare.md) | Chuẩn bị môi trường, MariaDB, RabbitMQ, Memcached | Controller + Compute | |
+| [02-keystone.md](02-keystone.md) | Identity Service | Controller | |
+| [03-glance.md](03-glance.md) | Image Service | Controller | |
+| [04-placement.md](04-placement.md) | Placement API | Controller | |
+| [05-nova.md](05-nova.md) | Compute Service | Controller + Compute | |
+| [06-neutron.md](06-neutron.md) | Networking Service (OVN) | Controller + Compute | |
+| [07-launch-instance.md](07-launch-instance.md) | Tạo instance đầu tiên | Controller | |
+| [08-horizon.md](08-horizon.md) | Dashboard | Controller | |
+| [09-cinder.md](09-cinder.md) | Block Storage (LVM) | Controller + Storage1 | |
+| [10-swift.md](10-swift.md) | Object Storage | Controller + Object1 + Object2 | |
+| [11-heat.md](11-heat.md) | Orchestration | Controller | |
+| [12-octavia.md](12-octavia.md) | Load Balancer (LBaaS) | Controller | |
+| [13-add-compute-node.md](13-add-compute-node.md) | Thêm Compute Node mới | Compute2 | Tùy chọn |
+| [14-ceilometer.md](14-ceilometer.md) | Telemetry (Ceilometer + Gnocchi + Aodh) | Controller + All Compute | Cài sau cùng |
 
 ---
 

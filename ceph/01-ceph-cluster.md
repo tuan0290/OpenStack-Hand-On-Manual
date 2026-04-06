@@ -304,7 +304,33 @@ ceph orch host ls
 
 > Thực hiện trên **ceph-mon1**
 
-### 4.1 Kiểm tra disk available
+### 4.1 Thêm disk vào VM trên VMware (trước khi cài OSD)
+
+Vì ceph-osd1 và ceph-osd2 được clone từ VM khác nên chưa có disk data. Cần add thủ công trên VMware:
+
+```
+1. Tắt VM ceph-osd1 (nếu đang chạy)
+2. VMware → ceph-osd1 → Settings → Add → Hard Disk
+   - Disk type: SCSI
+   - Create a new virtual disk
+   - Size: 50 GB
+   - Store as single file
+   - Disk file: ceph-osd1-data.vmdk
+3. Finish → OK
+4. Bật VM lại
+5. Lặp lại cho ceph-osd2
+```
+
+Verify disk đã được nhận trên VM:
+
+```bash
+# Trên ceph-osd1 và ceph-osd2
+lsblk
+# Phải thấy /dev/sdb (hoặc /dev/sdc tùy thứ tự)
+# Disk mới sẽ không có partition, không có filesystem
+```
+
+### 4.2 Kiểm tra disk available từ ceph-mon1
 
 ```bash
 # Xem disk nào có thể dùng làm OSD
@@ -314,7 +340,7 @@ ceph orch device ls --refresh
 # Nếu không → disk đã có partition hoặc filesystem
 ```
 
-### 4.2 Wipe disk nếu cần
+### 4.3 Wipe disk nếu cần
 
 Trên **ceph-osd1** và **ceph-osd2**:
 
@@ -329,7 +355,7 @@ sgdisk --zap-all /dev/sdb
 dd if=/dev/zero of=/dev/sdb bs=1M count=100
 ```
 
-### 4.3 Thêm OSD
+### 4.4 Thêm OSD
 
 ```bash
 # Thêm tất cả disk available tự động (khuyến nghị)

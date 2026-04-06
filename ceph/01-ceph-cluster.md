@@ -243,15 +243,20 @@ ssh-copy-id root@compute1
 ### 3.1 Cài đặt cephadm và thêm repo Squid
 
 ```bash
-# Cài cephadm từ Ubuntu repo
-apt install -y cephadm
+# Ceph Squid (v19) có sẵn trong Ubuntu 24.04 noble archive
+# KHÔNG cần thêm repo từ download.ceph.com (repo đó chưa hỗ trợ noble)
+apt install -y cephadm ceph-common
 
-# Thêm Ceph Squid (v19) repo
-cephadm add-repo --release squid
-
-# Cài ceph-common
-cephadm install ceph-common
+# Verify version - phải thấy 19.x (squid)
+cephadm --version
+ceph --version
 ```
+
+> Nếu lỡ chạy `cephadm add-repo --release squid` và bị lỗi 404, xóa repo đó đi:
+> ```bash
+> rm -f /etc/apt/sources.list.d/ceph.list
+> apt update
+> ```
 
 ### 3.2 Bootstrap cluster
 

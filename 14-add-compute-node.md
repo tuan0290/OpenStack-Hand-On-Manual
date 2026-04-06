@@ -34,9 +34,9 @@ Tạo VM mới với cấu hình tương tự compute1:
 
 | Interface | Network | IP | Mục đích |
 |---|---|---|---|
-| ens33 | VMnet8 (NAT) | 192.168.182.200 | Provider |
-| ens37 | VMnet1 (Host-only) | 192.168.225.200 | Management |
-| ens38 | VMnet2 (Host-only) | 192.168.147.200 | Tunnel |
+| ens33 | VMnet8 (NAT) | 192.168.182.201 | Provider |
+| ens37 | VMnet1 (Host-only) | 192.168.225.201 | Management |
+| ens38 | VMnet2 (Host-only) | 192.168.147.201 | Tunnel |
 
 > Thay đổi IP theo thực tế nếu dùng địa chỉ khác.
 
@@ -55,7 +55,7 @@ cat > /etc/hosts << 'EOF'
 127.0.0.1   localhost
 192.168.225.195   controller
 192.168.225.196   compute1
-192.168.225.200   compute2
+192.168.225.201   compute2
 192.168.225.197   storage1
 192.168.225.198   object1
 192.168.225.199   object2
@@ -73,7 +73,7 @@ network:
   ethernets:
     ens33:
       addresses:
-        - 192.168.182.200/24
+        - 192.168.182.201/24
       routes:
         - to: default
           via: 192.168.182.2
@@ -81,10 +81,10 @@ network:
         addresses: [8.8.8.8, 8.8.4.4]
     ens37:
       addresses:
-        - 192.168.225.200/24
+        - 192.168.225.201/24
     ens38:
       addresses:
-        - 192.168.147.200/24
+        - 192.168.147.201/24
 EOF
 
 netplan apply
@@ -133,7 +133,7 @@ Trên **controller**:
 ```bash
 ssh-copy-id root@compute2
 # Hoặc
-ssh-copy-id root@192.168.225.200
+ssh-copy-id root@192.168.225.201
 ```
 
 ---
@@ -157,7 +157,7 @@ Trong section `[DEFAULT]`:
 ```ini
 [DEFAULT]
 transport_url = rabbit://openstack:Welcome123@controller
-my_ip = 192.168.225.200
+my_ip = 192.168.225.201
 ```
 
 Trong section `[api]`:
@@ -339,7 +339,7 @@ systemctl enable openvswitch-switch
 # Kết nối OVS vào OVN SB DB trên controller
 ovs-vsctl set open . external-ids:ovn-remote=tcp:192.168.225.195:6642
 ovs-vsctl set open . external-ids:ovn-encap-type=geneve
-ovs-vsctl set open . external-ids:ovn-encap-ip=192.168.147.200
+ovs-vsctl set open . external-ids:ovn-encap-ip=192.168.147.201
 
 # Khởi động OVN controller
 systemctl start ovn-controller
@@ -393,7 +393,7 @@ Thêm `compute2` vào `/etc/hosts` trên **controller**, **compute1**, **storage
 ```bash
 # Chạy từ bastion
 for node in 192.168.225.195 192.168.225.196 192.168.225.197 192.168.225.198 192.168.225.199; do
-  ssh root@$node "echo '192.168.225.200   compute2' >> /etc/hosts"
+  ssh root@$node "echo '192.168.225.201   compute2' >> /etc/hosts"
 done
 ```
 
@@ -403,7 +403,7 @@ Thêm compute2 vào script check:
 
 ```bash
 # Sửa scripts/bastion-check.sh
-# Thêm COMPUTE2="192.168.225.200"
+# Thêm COMPUTE2="192.168.225.201"
 # Thêm check_remote_services $COMPUTE2 "COMPUTE2" nova-compute neutron-ovn-metadata-agent ovn-controller openvswitch-switch
 ```
 

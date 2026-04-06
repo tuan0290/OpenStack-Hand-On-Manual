@@ -202,6 +202,9 @@ systemctl restart systemd-resolved
 
 apt update && apt upgrade -y
 apt install -y chrony curl wget vim python3
+
+# Bắt buộc: cephadm dùng container để chạy daemons
+apt install -y podman
 ```
 
 ### 2.5 Cấu hình NTP

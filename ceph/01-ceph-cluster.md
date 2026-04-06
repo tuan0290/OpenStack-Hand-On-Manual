@@ -1,14 +1,16 @@
 # Cài đặt Ceph Cluster cho OpenStack
 
+> **Version:** Ceph **Squid (v19.2)** - phiên bản mới nhất, hỗ trợ Ubuntu 24.04 LTS native.
+>
 > Ceph cung cấp storage backend phân tán cho OpenStack:
-> - **RBD** (RADOS Block Device) → thay thế Cinder LVM
-> - **CephFS** → shared filesystem (tùy chọn)
+> - **RBD** (RADOS Block Device) → thay thế Cinder LVM, Nova ephemeral, Glance images
 > - **RGW** (RADOS Gateway) → thay thế Swift Object Storage (tùy chọn)
+> - **CephFS** → shared filesystem (tùy chọn)
 
 ## Kiến trúc
 
 ```
-OpenStack Nodes                    Ceph Cluster
+OpenStack Nodes                    Ceph Cluster (Squid v19)
 ┌─────────────────────┐           ┌──────────────────────────────────────┐
 │ controller          │──RBD──────►│ ceph-mon1 (192.168.225.202)          │
 │  ├─ Glance (images) │           │  ├─ MON: cluster map, quorum         │
@@ -46,7 +48,7 @@ Networks:
 
 1. [IP Planning và chuẩn bị VM](#1-ip-planning-và-chuẩn-bị-vm)
 2. [Chuẩn bị môi trường trên tất cả nodes](#2-chuẩn-bị-môi-trường-trên-tất-cả-nodes)
-3. [Cài đặt Ceph bằng cephadm](#3-cài-đặt-ceph-bằng-cephadm)
+3. [Cài đặt Ceph Squid bằng cephadm](#3-cài-đặt-ceph-squid-bằng-cephadm)
 4. [Thêm OSD nodes](#4-thêm-osd-nodes)
 5. [Tạo pools cho OpenStack](#5-tạo-pools-cho-openstack)
 6. [Tích hợp với OpenStack](#6-tích-hợp-với-openstack)
@@ -84,18 +86,14 @@ Networks:
 
 ### 2.1 Cấu hình hostname
 
-Trên **ceph-mon1**:
 ```bash
+# Trên ceph-mon1
 hostnamectl set-hostname ceph-mon1
-```
 
-Trên **ceph-osd1**:
-```bash
+# Trên ceph-osd1
 hostnamectl set-hostname ceph-osd1
-```
 
-Trên **ceph-osd2**:
-```bash
+# Trên ceph-osd2
 hostnamectl set-hostname ceph-osd2
 ```
 
@@ -134,7 +132,8 @@ network:
       addresses: [192.168.147.202/24]
 ```
 
-Trên **ceph-osd1**:
+Trên **ceph-osd1** (`/etc/netplan/00-installer-config.yaml`):
+
 ```yaml
 network:
   version: 2
@@ -152,7 +151,8 @@ network:
       addresses: [192.168.147.203/24]
 ```
 
-Trên **ceph-osd2**:
+Trên **ceph-osd2** (`/etc/netplan/00-installer-config.yaml`):
+
 ```yaml
 network:
   version: 2
@@ -174,9 +174,19 @@ network:
 netplan apply
 ```
 
-### 2.4 Cài đặt package cơ bản
+### 2.4 Cài đặt package cơ bản và fix DNS
 
 ```bash
+# Fix DNS (tránh bị ghi đè bởi systemd-resolved)
+mkdir -p /etc/systemd/resolved.conf.d/
+cat > /etc/systemd/resolved.conf.d/dns.conf << 'EOF'
+[Resolve]
+DNS=8.8.8.8 8.8.4.4
+DNSStubListener=no
+EOF
+ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf
+systemctl restart systemd-resolved
+
 apt update && apt upgrade -y
 apt install -y chrony curl wget vim python3
 ```
@@ -192,6 +202,7 @@ rtcsync
 EOF
 
 systemctl restart chrony
+chronyc tracking
 ```
 
 ### 2.6 Cấu hình SSH key từ ceph-mon1
@@ -199,9 +210,9 @@ systemctl restart chrony
 Trên **ceph-mon1**:
 
 ```bash
-ssh-keygen -q -N "" -f ~/.ssh/id_rsa
+ssh-keygen -q -N "" -f ~/.ssh/id_rsa 2>/dev/null || true
 
-# Copy key sang các nodes
+# Copy key sang Ceph nodes
 ssh-copy-id root@ceph-osd1
 ssh-copy-id root@ceph-osd2
 
@@ -212,29 +223,26 @@ ssh-copy-id root@compute1
 
 ---
 
-## 3. Cài đặt Ceph bằng cephadm
+## 3. Cài đặt Ceph Squid bằng cephadm
 
 > Thực hiện trên **ceph-mon1**
 
-### 3.1 Cài đặt cephadm
+### 3.1 Cài đặt cephadm và thêm repo Squid
 
 ```bash
+# Cài cephadm từ Ubuntu repo
 apt install -y cephadm
 
-# Hoặc download trực tiếp
-curl --silent --remote-name --location https://github.com/ceph/ceph/raw/quincy/src/cephadm/cephadm
-chmod +x cephadm
-mv cephadm /usr/local/bin/
+# Thêm Ceph Squid (v19) repo
+cephadm add-repo --release squid
 
-# Thêm Ceph repo
-cephadm add-repo --release reef
-cephadm install
+# Cài ceph-common
+cephadm install ceph-common
 ```
 
 ### 3.2 Bootstrap cluster
 
 ```bash
-# Bootstrap với MON IP là Management IP của ceph-mon1
 cephadm bootstrap \
   --mon-ip 192.168.225.202 \
   --cluster-network 192.168.147.0/24 \
@@ -249,21 +257,23 @@ cephadm bootstrap \
 ```
 
 > `--cluster-network` chỉ định mạng dùng cho OSD replication (ens38).
+> `--mon-ip` dùng Management IP (ens37).
 
-### 3.3 Cài đặt Ceph CLI
+### 3.3 Verify cài đặt
 
 ```bash
-cephadm install ceph-common
-
-# Verify
+# Kiểm tra version
 ceph -v
+# Phải thấy: ceph version 19.x.x (squid)
+
 ceph status
+# Phải thấy: health: HEALTH_WARN (bình thường khi chưa có OSD)
 ```
 
 ### 3.4 Thêm hosts vào cluster
 
 ```bash
-# Copy SSH key của cephadm sang các nodes
+# Copy SSH key của cephadm sang OSD nodes
 ssh-copy-id -f -i /etc/ceph/ceph.pub root@ceph-osd1
 ssh-copy-id -f -i /etc/ceph/ceph.pub root@ceph-osd2
 
@@ -285,49 +295,56 @@ ceph orch host ls
 
 ```bash
 # Xem disk nào có thể dùng làm OSD
-ceph orch device ls
+ceph orch device ls --refresh
 
-# Disk phải có status: Available
-# Nếu không Available → disk đã có partition hoặc filesystem
+# Disk phải có status: Available=Yes
+# Nếu không → disk đã có partition hoặc filesystem
 ```
 
 ### 4.2 Wipe disk nếu cần
 
-```bash
-# Trên ceph-osd1 và ceph-osd2
-# Xác định disk data (thường là /dev/sdb)
-lsblk
+Trên **ceph-osd1** và **ceph-osd2**:
 
-# Wipe disk
+```bash
+# Xác định disk data
+lsblk
+# Thường là /dev/sdb
+
+# Wipe sạch
 wipefs -a /dev/sdb
 sgdisk --zap-all /dev/sdb
+dd if=/dev/zero of=/dev/sdb bs=1M count=100
 ```
 
 ### 4.3 Thêm OSD
 
 ```bash
-# Thêm tất cả disk available tự động
+# Thêm tất cả disk available tự động (khuyến nghị)
 ceph orch apply osd --all-available-devices
 
 # Hoặc thêm từng disk cụ thể
 ceph orch daemon add osd ceph-osd1:/dev/sdb
 ceph orch daemon add osd ceph-osd2:/dev/sdb
 
-# Theo dõi quá trình
+# Theo dõi quá trình (chờ 1-2 phút)
 watch ceph status
-# Chờ đến khi: health: HEALTH_OK
+# Chờ đến khi: health: HEALTH_OK, osd: 2 up, 2 in
 ```
 
 ### 4.4 Verify cluster
 
 ```bash
 ceph status
-# Phải thấy:
-#   cluster: HEALTH_OK
-#   osd: 2 osds: 2 up, 2 in
-
 ceph osd tree
 ceph df
+```
+
+Output mong đợi:
+```
+cluster:
+  health: HEALTH_OK
+osd:
+  osd: 2 osds: 2 up (since ...), 2 in (since ...)
 ```
 
 ---
@@ -339,37 +356,38 @@ ceph df
 ### 5.1 Tạo pools
 
 ```bash
-# Pool cho Glance images
-ceph osd pool create volumes 64
-ceph osd pool create images 64
-ceph osd pool create backups 64
-ceph osd pool create vms 64
+# Tạo pools với số PG phù hợp cho lab 2 OSD
+# Công thức: (OSDs * 100) / replicas / pool_count → làm tròn lên 2^n
+ceph osd pool create volumes 32
+ceph osd pool create images  32
+ceph osd pool create backups 32
+ceph osd pool create vms     32
 
-# Enable RBD application cho từng pool
+# Enable RBD application
 rbd pool init volumes
 rbd pool init images
 rbd pool init backups
 rbd pool init vms
 ```
 
-> Số PG (64) phù hợp cho lab nhỏ với 2 OSD. Production dùng công thức: `(OSDs * 100) / replicas`.
+> Với 2 OSD, replication size mặc định là 2. Dùng 32 PG/pool là phù hợp cho lab.
 
 ### 5.2 Tạo Ceph users cho OpenStack
 
 ```bash
-# User cho Cinder
+# User cho Cinder (volumes + vms + read images)
 ceph auth get-or-create client.cinder \
   mon 'profile rbd' \
   osd 'profile rbd pool=volumes, profile rbd pool=vms, profile rbd-read-only pool=images' \
   mgr 'profile rbd pool=volumes, profile rbd pool=vms'
 
-# User cho Glance
+# User cho Glance (images)
 ceph auth get-or-create client.glance \
   mon 'profile rbd' \
   osd 'profile rbd pool=images' \
   mgr 'profile rbd pool=images'
 
-# User cho Nova
+# User cho Nova (vms + read images)
 ceph auth get-or-create client.nova \
   mon 'profile rbd' \
   osd 'profile rbd pool=vms, profile rbd-read-only pool=images' \
@@ -379,12 +397,15 @@ ceph auth get-or-create client.nova \
 ceph auth get-or-create client.cinder > /etc/ceph/ceph.client.cinder.keyring
 ceph auth get-or-create client.glance > /etc/ceph/ceph.client.glance.keyring
 ceph auth get-or-create client.nova   > /etc/ceph/ceph.client.nova.keyring
+
+# Verify
+ceph auth ls | grep client
 ```
 
 ### 5.3 Copy config và keyring sang OpenStack nodes
 
 ```bash
-# Copy ceph.conf
+# Copy ceph.conf và ceph.client.admin.keyring
 for node in controller compute1; do
   ssh root@$node "mkdir -p /etc/ceph"
   scp /etc/ceph/ceph.conf root@$node:/etc/ceph/
@@ -406,10 +427,11 @@ scp /etc/ceph/ceph.client.nova.keyring   root@compute1:/etc/ceph/
 Trên **controller**:
 
 ```bash
-apt install -y python3-rbd
+apt install -y python3-rbd ceph-common
 
 # Phân quyền keyring
 chown glance:glance /etc/ceph/ceph.client.glance.keyring
+chmod 640 /etc/ceph/ceph.client.glance.keyring
 ```
 
 Sửa `/etc/glance/glance-api.conf`:
@@ -426,11 +448,14 @@ rbd_store_chunk_size = 8
 
 ```bash
 systemctl restart glance-api
+
+# Verify
+openstack image list
 ```
 
 ### 6.2 Tích hợp Cinder → Ceph RBD
 
-> Cinder volume service chạy trên **controller** (không dùng storage1 riêng).
+> Cinder volume service chạy trên **controller**.
 
 Trên **controller**:
 
@@ -438,6 +463,7 @@ Trên **controller**:
 apt install -y python3-rbd ceph-common
 
 chown cinder:cinder /etc/ceph/ceph.client.cinder.keyring
+chmod 640 /etc/ceph/ceph.client.cinder.keyring
 ```
 
 Sửa `/etc/cinder/cinder.conf`:
@@ -445,6 +471,7 @@ Sửa `/etc/cinder/cinder.conf`:
 ```ini
 [DEFAULT]
 enabled_backends = ceph
+glance_api_version = 2
 
 [ceph]
 volume_driver = cinder.volume.drivers.rbd.RBDDriver
@@ -459,16 +486,24 @@ rbd_user = cinder
 rbd_secret_uuid = <LIBVIRT_SECRET_UUID>
 ```
 
-Tạo libvirt secret cho Nova (trên **compute1**):
+```bash
+systemctl restart cinder-volume cinder-scheduler apache2
+```
+
+### 6.3 Tạo libvirt secret trên compute1
+
+Trên **compute1** (cần để Nova attach Cinder volume):
 
 ```bash
-# Tạo UUID
+apt install -y python3-rbd ceph-common
+
+# Tạo UUID cố định cho secret
 CINDER_UUID=$(uuidgen)
 echo "CINDER_UUID=$CINDER_UUID"
-# Lưu UUID này để điền vào rbd_secret_uuid ở trên
+# Lưu UUID này → điền vào rbd_secret_uuid trong cinder.conf ở trên
 
 # Lấy key của client.cinder
-CINDER_KEY=$(ceph auth get-key client.cinder)
+CINDER_KEY=$(ssh root@ceph-mon1 "ceph auth get-key client.cinder")
 
 # Tạo libvirt secret
 cat > /tmp/secret.xml << EOF
@@ -482,23 +517,23 @@ EOF
 
 virsh secret-define --file /tmp/secret.xml
 virsh secret-set-value --secret $CINDER_UUID --base64 $CINDER_KEY
+
+# Verify
+virsh secret-list
 ```
 
-```bash
-# Restart Cinder
-systemctl restart cinder-volume
-```
+> Sau khi có UUID, quay lại cập nhật `rbd_secret_uuid` trong `/etc/cinder/cinder.conf` trên controller.
 
-### 6.3 Tích hợp Nova → Ceph RBD (ephemeral disk)
+### 6.4 Tích hợp Nova → Ceph RBD (ephemeral disk)
 
 Trên **compute1**:
 
 ```bash
-apt install -y python3-rbd ceph-common
 chown nova:nova /etc/ceph/ceph.client.nova.keyring
+chmod 640 /etc/ceph/ceph.client.nova.keyring
 ```
 
-Sửa `/etc/nova/nova.conf`:
+Sửa `/etc/nova/nova.conf`, trong section `[libvirt]`:
 
 ```ini
 [libvirt]
@@ -508,6 +543,7 @@ images_rbd_ceph_conf = /etc/ceph/ceph.conf
 rbd_user = nova
 rbd_secret_uuid = <CINDER_UUID>
 disk_cachemodes = network=writeback
+hw_disk_discard = unmap
 ```
 
 ```bash
@@ -519,28 +555,42 @@ systemctl restart nova-compute
 ## 7. Kiểm tra
 
 ```bash
-# Trên ceph-mon1
+# Trên ceph-mon1 - cluster health
 ceph status
 ceph df
 ceph osd tree
 
-# Test tạo RBD image
+# Test RBD trực tiếp
 rbd create --size 1024 volumes/test-image
 rbd ls volumes
 rbd info volumes/test-image
 rbd rm volumes/test-image
 
-# Test từ OpenStack - tạo volume dùng Ceph backend
+# Test từ OpenStack
 source ~/admin-openrc
+
+# Tạo volume type Ceph
 openstack volume type create ceph-rbd \
   --property volume_backend_name=ceph
 
+# Tạo volume
 openstack volume create --size 1 --type ceph-rbd test-ceph-vol
 openstack volume show test-ceph-vol
-# status phải là available
+# status phải là: available
+
+# Verify volume tồn tại trong Ceph
+ssh root@ceph-mon1 "rbd ls volumes"
+# Phải thấy volume-<uuid>
+
+# Upload image và verify lưu trong Ceph
+openstack image create --disk-format qcow2 --container-format bare \
+  --file /tmp/cirros.img test-ceph-image
+ssh root@ceph-mon1 "rbd ls images"
+# Phải thấy image-<uuid>
 
 # Cleanup
 openstack volume delete test-ceph-vol
+openstack image delete test-ceph-image
 ```
 
 ---

@@ -369,29 +369,40 @@ dd if=/dev/zero of=/dev/sdb bs=1M count=100
 # Thêm tất cả disk available tự động (khuyến nghị)
 ceph orch apply osd --all-available-devices
 
-# Hoặc thêm từng disk cụ thể
-ceph orch daemon add osd ceph-osd1:/dev/sdb
-ceph orch daemon add osd ceph-osd2:/dev/sdb
-
 # Theo dõi quá trình (chờ 1-2 phút)
 watch ceph status
-# Chờ đến khi: health: HEALTH_OK, osd: 2 up, 2 in
+# Chờ đến khi: osd: 2 osds: 2 up, 2 in
 ```
 
-### 4.4 Verify cluster
+### 4.5 Fix HEALTH_WARN - OSD count < replication size
+
+Sau khi thêm OSD, cluster sẽ báo:
+```
+HEALTH_WARN: OSD count 2 < osd_pool_default_size 3
+```
+
+Nguyên nhân: Ceph mặc định replication size = 3 (cần 3 OSD), lab chỉ có 2 OSD.
+
+```bash
+# Set replication size = 2 cho lab 2 OSD
+ceph config set global osd_pool_default_size 2
+ceph config set global osd_pool_default_min_size 1
+
+# Verify - phải thấy HEALTH_OK
+ceph status
+```
+
+### 4.6 Verify cluster
 
 ```bash
 ceph status
+# Phải thấy:
+#   health: HEALTH_OK
+#   osd: 2 osds: 2 up, 2 in
+#   usage: xxx GiB / 100 GiB avail
+
 ceph osd tree
 ceph df
-```
-
-Output mong đợi:
-```
-cluster:
-  health: HEALTH_OK
-osd:
-  osd: 2 osds: 2 up (since ...), 2 in (since ...)
 ```
 
 ---

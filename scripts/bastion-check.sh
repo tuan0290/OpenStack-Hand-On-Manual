@@ -115,8 +115,12 @@ if ssh_check $CONTROLLER; then
   if [ "$oct_iface" = "active" ]; then
     ok "octavia-interface"
   else
+    fail "octavia-interface"
+    echo "  Fix: ssh root@$CONTROLLER"
+    echo "    ip link del o-hm0 2>/dev/null || true"
+    echo "    ovs-vsctl del-port br-int o-bhm0 2>/dev/null || true"
+    echo "    systemctl start octavia-interface"
     if $AUTO_FIX; then
-      # Xóa interface cũ trước (tránh lỗi "File exists" khi start)
       ssh $SSH_OPTS $SSH_USER@$CONTROLLER "
         ip link del o-hm0 2>/dev/null || true
         ovs-vsctl del-port br-int o-bhm0 2>/dev/null || true
@@ -126,8 +130,6 @@ if ssh_check $CONTROLLER; then
       sleep 2
       oct_iface=$(ssh $SSH_OPTS $SSH_USER@$CONTROLLER "systemctl is-active octavia-interface 2>/dev/null")
       [ "$oct_iface" = "active" ] && fixed "octavia-interface (started)" || fail "octavia-interface (start failed)"
-    else
-      fail "octavia-interface - fix: systemctl start octavia-interface"
     fi
   fi
 
@@ -135,11 +137,11 @@ if ssh_check $CONTROLLER; then
   if [ -n "$hm0_ip" ]; then
     ok "o-hm0 IP 172.16.0.2 OK"
   else
+    fail "o-hm0 missing IP"
+    echo "  Fix: ssh root@$CONTROLLER 'ip addr add 172.16.0.2/12 dev o-hm0 && ip link set o-hm0 up'"
     if $AUTO_FIX; then
       ssh $SSH_OPTS $SSH_USER@$CONTROLLER "ip addr add 172.16.0.2/12 dev o-hm0 2>/dev/null; ip link set o-hm0 up" &>/dev/null
       fixed "o-hm0 IP set to 172.16.0.2"
-    else
-      fail "o-hm0 missing IP - fix: ip addr add 172.16.0.2/12 dev o-hm0 && ip link set o-hm0 up"
     fi
   fi
 fi

@@ -9,15 +9,27 @@
 
 ```
 OpenStack Nodes                    Ceph Cluster
-┌─────────────┐                   ┌──────────────────────────────────┐
-│ controller  │──── RBD (Glance)──►│                                  │
-│ compute1    │──── RBD (Nova)  ──►│  ceph-mon1 (192.168.225.202)     │
-│ storage1    │──── RBD (Cinder)──►│  ceph-osd1 (192.168.225.203)     │
-└─────────────┘                   │  ceph-osd2 (192.168.225.204)     │
-                                  │                                  │
-                                  │  MON: quorum, cluster map        │
-                                  │  OSD: lưu data trên disk         │
-                                  └──────────────────────────────────┘
+┌─────────────────────┐           ┌──────────────────────────────────────┐
+│ controller          │──RBD──────►│ ceph-mon1 (192.168.225.202)          │
+│  ├─ Glance (images) │           │  ├─ MON: cluster map, quorum         │
+│  └─ Cinder (volume) │           │  └─ MGR: dashboard, metrics          │
+├─────────────────────┤           │                                      │
+│ compute1            │──RBD──────►│ ceph-osd1 (192.168.225.203)          │
+│  └─ Nova (vms)      │           │  └─ OSD: /dev/sdb (50GB)             │
+└─────────────────────┘           │                                      │
+                                  │ ceph-osd2 (192.168.225.204)          │
+                                  │  └─ OSD: /dev/sdb (50GB)             │
+                                  └──────────────────────────────────────┘
+
+Ceph Pools:
+  images  → Glance image storage
+  volumes → Cinder block volumes
+  vms     → Nova ephemeral disks
+  backups → Cinder volume backups
+
+Networks:
+  Management (ens37/192.168.225.x) → API, admin traffic
+  Cluster    (ens38/192.168.147.x) → OSD replication traffic (tách biệt)
 ```
 
 **Các thành phần Ceph:**
@@ -98,7 +110,6 @@ cat >> /etc/hosts << 'EOF'
 # OpenStack nodes
 192.168.225.195   controller
 192.168.225.196   compute1
-192.168.225.197   storage1
 EOF
 ```
 
@@ -197,7 +208,6 @@ ssh-copy-id root@ceph-osd2
 # Copy sang OpenStack nodes (cần khi tích hợp)
 ssh-copy-id root@controller
 ssh-copy-id root@compute1
-ssh-copy-id root@storage1
 ```
 
 ---
@@ -375,14 +385,14 @@ ceph auth get-or-create client.nova   > /etc/ceph/ceph.client.nova.keyring
 
 ```bash
 # Copy ceph.conf
-for node in controller compute1 storage1; do
+for node in controller compute1; do
   ssh root@$node "mkdir -p /etc/ceph"
   scp /etc/ceph/ceph.conf root@$node:/etc/ceph/
 done
 
 # Copy keyring theo từng node
 scp /etc/ceph/ceph.client.glance.keyring root@controller:/etc/ceph/
-scp /etc/ceph/ceph.client.cinder.keyring root@storage1:/etc/ceph/
+scp /etc/ceph/ceph.client.cinder.keyring root@controller:/etc/ceph/
 scp /etc/ceph/ceph.client.cinder.keyring root@compute1:/etc/ceph/
 scp /etc/ceph/ceph.client.nova.keyring   root@compute1:/etc/ceph/
 ```
@@ -420,7 +430,9 @@ systemctl restart glance-api
 
 ### 6.2 Tích hợp Cinder → Ceph RBD
 
-Trên **storage1** (hoặc controller nếu không có storage1):
+> Cinder volume service chạy trên **controller** (không dùng storage1 riêng).
+
+Trên **controller**:
 
 ```bash
 apt install -y python3-rbd ceph-common

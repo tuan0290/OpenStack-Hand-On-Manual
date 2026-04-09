@@ -494,10 +494,20 @@ chmod 640 /etc/ceph/ceph.client.glance.keyring
 
 Sửa `/etc/glance/glance-api.conf`:
 
+> Từ OpenStack 2024.x trở đi, Glance dùng **multi-store** config. Cần set `enabled_backends` và `default_backend` trong `[DEFAULT]`, sau đó tạo section riêng cho backend.
+
+Trong section `[DEFAULT]`:
+
 ```ini
-[glance_store]
-stores = rbd
-default_store = rbd
+[DEFAULT]
+enabled_backends = ceph:rbd
+default_backend = ceph
+```
+
+Thêm section `[ceph]` mới (thay thế `[glance_store]`):
+
+```ini
+[ceph]
 rbd_store_pool = images
 rbd_store_user = glance
 rbd_store_ceph_conf = /etc/ceph/ceph.conf
@@ -506,8 +516,10 @@ rbd_store_chunk_size = 8
 
 ```bash
 systemctl restart glance-api
+systemctl status glance-api
 
 # Verify
+source ~/admin-openrc
 openstack image list
 ```
 

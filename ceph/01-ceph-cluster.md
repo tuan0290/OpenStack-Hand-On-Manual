@@ -655,16 +655,24 @@ Trên **compute1** (cần để Nova attach Cinder volume qua RBD):
 ```bash
 apt install -y python3-rbd ceph-common
 
-# Tạo UUID cố định cho secret
-CINDER_UUID=$(uuidgen)
-echo "CINDER_UUID=$CINDER_UUID"
-# Lưu UUID này lại - cần điền vào cinder.conf và nova.conf
+# Bắt buộc: thêm ceph-mon1 vào /etc/hosts trên compute1
+# (cần để SSH lấy key từ ceph-mon1)
+echo "192.168.225.202   ceph-mon1" >> /etc/hosts
+echo "192.168.225.203   ceph-osd1" >> /etc/hosts
+echo "192.168.225.204   ceph-osd2" >> /etc/hosts
 
-# Lấy key của client.cinder từ ceph-mon1
+# Copy SSH key từ bastion/controller sang compute1 nếu chưa có
+# ssh-copy-id root@ceph-mon1  (chạy từ compute1)
+```
+
+Tạo 2 secrets riêng biệt - 1 cho **cinder**, 1 cho **nova**:
+
+```bash
+# ── Secret cho client.cinder ──────────────────────────────
+CINDER_UUID=$(uuidgen)
 CINDER_KEY=$(ssh root@ceph-mon1 "ceph auth get-key client.cinder")
 
-# Tạo libvirt secret XML
-cat > /tmp/secret.xml << EOF
+cat > /tmp/cinder-secret.xml << EOF
 <secret ephemeral='no' private='no'>
   <uuid>$CINDER_UUID</uuid>
   <usage type='ceph'>
@@ -673,22 +681,42 @@ cat > /tmp/secret.xml << EOF
 </secret>
 EOF
 
-virsh secret-define --file /tmp/secret.xml
-virsh secret-set-value --secret $CINDER_UUID --base64 $CINDER_KEY
-# Warning "insecure" là bình thường, không phải lỗi
+virsh secret-define --file /tmp/cinder-secret.xml
+virsh secret-set-value $CINDER_UUID --base64 $CINDER_KEY
+echo "CINDER_UUID=$CINDER_UUID"
 
-# Verify
+# ── Secret cho client.nova ────────────────────────────────
+NOVA_UUID=$(uuidgen)
+NOVA_KEY=$(ssh root@ceph-mon1 "ceph auth get-key client.nova")
+
+cat > /tmp/nova-secret.xml << EOF
+<secret ephemeral='no' private='no'>
+  <uuid>$NOVA_UUID</uuid>
+  <usage type='ceph'>
+    <name>client.nova secret</name>
+  </usage>
+</secret>
+EOF
+
+virsh secret-define --file /tmp/nova-secret.xml
+virsh secret-set-value $NOVA_UUID --base64 $NOVA_KEY
+echo "NOVA_UUID=$NOVA_UUID"
+
+# Verify cả 2 secrets đều có value
 virsh secret-list
-# Phải thấy UUID vừa tạo
+virsh secret-get-value $CINDER_UUID
+virsh secret-get-value $NOVA_UUID
+# Phải trả về key string, không phải error
 ```
 
-Sau khi có UUID, cập nhật `rbd_secret_uuid` trên **controller**:
+> Lưu lại cả 2 UUID - cần điền vào `cinder.conf` và `nova.conf`.
+
+Cập nhật `cinder.conf` trên **controller**:
 
 ```bash
-# Trên controller - thay <UUID> bằng giá trị thực tế
-sed -i 's/rbd_secret_uuid = <LIBVIRT_SECRET_UUID>/rbd_secret_uuid = <UUID>/' \
+# Trên controller
+sed -i "s/rbd_secret_uuid = <LIBVIRT_SECRET_UUID>/rbd_secret_uuid = $CINDER_UUID/" \
   /etc/cinder/cinder.conf
-
 grep rbd_secret_uuid /etc/cinder/cinder.conf
 systemctl restart cinder-volume
 ```
@@ -713,18 +741,19 @@ images_type = rbd
 images_rbd_pool = vms
 images_rbd_ceph_conf = /etc/ceph/ceph.conf
 rbd_user = nova
-rbd_secret_uuid = <CINDER_UUID>
+rbd_secret_uuid = <NOVA_UUID>
 disk_cachemodes = network=writeback
 hw_disk_discard = unmap
 ```
 
+> Dùng **NOVA_UUID** (secret của client.nova) - KHÔNG dùng CINDER_UUID.
 > `virt_type = qemu` giữ nguyên nếu đã có từ trước (VMware nested virt).
-> Thay `<CINDER_UUID>` bằng UUID đã tạo ở bước 6.3.
 
 ```bash
 systemctl restart nova-compute
 
-# Verify nova-compute up
+# Verify nova-compute up (chạy từ controller)
+source ~/admin-openrc
 openstack compute service list | grep compute
 ```
 

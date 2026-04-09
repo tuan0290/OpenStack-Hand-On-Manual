@@ -572,24 +572,34 @@ openstack image delete cirros-ceph-test
 
 ### 6.2 Tích hợp Cinder → Ceph RBD
 
-> Cinder volume service chạy trên **controller**.
+> Cinder volume service chạy trên **controller** (không dùng storage1 riêng).
+> Config ban đầu dùng LVM backend (`enabled_backends = lvm`), giờ thay bằng Ceph.
 
 Trên **controller**:
 
 ```bash
-apt install -y python3-rbd ceph-common
+apt install -y python3-rbd ceph-common cinder-volume
 
 chown cinder:cinder /etc/ceph/ceph.client.cinder.keyring
 chmod 640 /etc/ceph/ceph.client.cinder.keyring
 ```
 
-Sửa `/etc/cinder/cinder.conf`:
+Sửa `/etc/cinder/cinder.conf` - thay đổi 2 chỗ:
 
+**Chỗ 1:** Trong section `[DEFAULT]`, sửa `enabled_backends`:
 ```ini
 [DEFAULT]
+transport_url = rabbit://openstack:Welcome123@controller
+auth_strategy = keystone
+my_ip = 192.168.225.195
 enabled_backends = ceph
-glance_api_version = 2
+glance_api_servers = http://controller:9292
+```
 
+> Nếu trước đó là `enabled_backends = lvm` thì đổi thành `ceph`.
+
+**Chỗ 2:** Thêm section `[ceph]` mới (thay thế section `[lvm]` cũ nếu có):
+```ini
 [ceph]
 volume_driver = cinder.volume.drivers.rbd.RBDDriver
 volume_backend_name = ceph
@@ -603,8 +613,39 @@ rbd_user = cinder
 rbd_secret_uuid = <LIBVIRT_SECRET_UUID>
 ```
 
+> `rbd_secret_uuid` điền sau khi tạo libvirt secret ở bước 6.3.
+
 ```bash
 systemctl restart cinder-volume cinder-scheduler apache2
+systemctl enable cinder-volume
+
+# Verify services up
+openstack volume service list
+```
+
+**Verify Cinder đang dùng Ceph:**
+
+```bash
+source ~/admin-openrc
+
+# Tạo volume type Ceph
+openstack volume type create ceph-rbd \
+  --property volume_backend_name=ceph
+
+# Tạo volume test
+openstack volume create --size 1 --type ceph-rbd test-ceph-vol
+watch openstack volume show test-ceph-vol -f value -c status
+# Chờ status = available
+
+# Lấy volume ID và kiểm tra trong Ceph
+VOL_ID=$(openstack volume show test-ceph-vol -f value -c id)
+ssh root@ceph-mon1 "rbd ls volumes"
+# Phải thấy: volume-$VOL_ID
+
+ssh root@ceph-mon1 "rbd info volumes/volume-$VOL_ID"
+
+# Cleanup
+openstack volume delete test-ceph-vol
 ```
 
 ### 6.3 Tạo libvirt secret trên compute1

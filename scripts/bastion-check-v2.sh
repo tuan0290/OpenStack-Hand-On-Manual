@@ -113,9 +113,25 @@ info "[CEPH-MON1] ($CEPH_MON1)"
 if ! ssh_check $CEPH_MON1; then
   fail "Cannot SSH to $CEPH_MON1"
 else
-  # Check ceph daemons via cephadm (chạy trong container)
+  # Check ceph daemons - chạy trong podman container, không phải systemd trực tiếp
   for svc in "ceph-mon@ceph-mon1" "ceph-mgr@ceph-mon1"; do
-    check_svc $CEPH_MON1 "$svc"
+    # cephadm dùng systemd unit dạng: ceph-<fsid>@<type>.<id>
+    result=$(ssh $SSH_OPTS $SSH_USER@$CEPH_MON1 "
+      systemctl list-units 'ceph-*' --state=active --no-legend 2>/dev/null | grep -c active || echo 0
+    ")
+    if [ "$result" -gt 0 ] 2>/dev/null; then
+      ok "$svc (running via cephadm)"
+      break
+    else
+      # Fallback: check podman containers
+      containers=$(ssh $SSH_OPTS $SSH_USER@$CEPH_MON1 "podman ps --format '{{.Names}}' 2>/dev/null | grep -c ceph || echo 0")
+      if [ "$containers" -gt 0 ] 2>/dev/null; then
+        ok "$svc (running in podman container)"
+        break
+      else
+        fail "$svc"
+      fi
+    fi
   done
 
   # Cluster health
@@ -144,7 +160,13 @@ if ! ssh_check $CEPH_OSD1; then
 else
   osd_ids=$(ssh $SSH_OPTS $SSH_USER@$CEPH_OSD1 "ls /var/lib/ceph/osd/ 2>/dev/null | sed 's/ceph-//'")
   if [ -z "$osd_ids" ]; then
-    fail "No OSD found on ceph-osd1"
+    # cephadm lưu ở path khác
+    containers=$(ssh $SSH_OPTS $SSH_USER@$CEPH_OSD1 "podman ps --format '{{.Names}}' 2>/dev/null | grep osd")
+    if [ -n "$containers" ]; then
+      ok "ceph-osd1: OSD running in container: $containers"
+    else
+      fail "No OSD found on ceph-osd1"
+    fi
   else
     for id in $osd_ids; do
       check_svc $CEPH_OSD1 "ceph-osd@$id"
@@ -160,7 +182,12 @@ if ! ssh_check $CEPH_OSD2; then
 else
   osd_ids=$(ssh $SSH_OPTS $SSH_USER@$CEPH_OSD2 "ls /var/lib/ceph/osd/ 2>/dev/null | sed 's/ceph-//'")
   if [ -z "$osd_ids" ]; then
-    fail "No OSD found on ceph-osd2"
+    containers=$(ssh $SSH_OPTS $SSH_USER@$CEPH_OSD2 "podman ps --format '{{.Names}}' 2>/dev/null | grep osd")
+    if [ -n "$containers" ]; then
+      ok "ceph-osd2: OSD running in container: $containers"
+    else
+      fail "No OSD found on ceph-osd2"
+    fi
   else
     for id in $osd_ids; do
       check_svc $CEPH_OSD2 "ceph-osd@$id"

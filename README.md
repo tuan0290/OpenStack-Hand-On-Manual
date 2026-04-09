@@ -87,6 +87,7 @@ OpenStack-Manual/
 | [12-octavia.md](12-octavia.md) | Load Balancer (LBaaS) | Controller | |
 | [13-add-compute-node.md](13-add-compute-node.md) | Thêm Compute Node mới | Compute2 | Tùy chọn |
 | [14-ceilometer.md](14-ceilometer.md) | Telemetry (Ceilometer + Gnocchi + Aodh) | Controller + All Compute | Cài sau cùng |
+| [15-ceph-integration.md](15-ceph-integration.md) | Tích hợp Ceph (Glance/Cinder/Nova/RGW) | Controller + Compute + Ceph | Tùy chọn, thay LVM/Swift |
 
 ---
 

@@ -531,9 +531,43 @@ systemctl status glance-api
 # Nếu vẫn lỗi, xem log chi tiết
 journalctl -u glance-api --since "1 minute ago" --no-pager | grep -v "^$"
 
-# Verify
+# Verify - list images
 source ~/admin-openrc
 openstack image list
+```
+
+**Verify Glance đang lưu vào Ceph:**
+
+```bash
+# Download cirros nếu chưa có
+wget -q http://download.cirros-cloud.net/0.6.2/cirros-0.6.2-x86_64-disk.img \
+  -O /tmp/cirros.img
+
+# Upload image mới
+openstack image create \
+  --disk-format qcow2 \
+  --container-format bare \
+  --public \
+  --file /tmp/cirros.img \
+  cirros-ceph-test
+
+# Lấy ID
+IMAGE_ID=$(openstack image show cirros-ceph-test -f value -c id)
+echo "Image ID: $IMAGE_ID"
+
+# Kiểm tra image có trong Ceph pool
+ssh root@ceph-mon1 "rbd ls images"
+# Phải thấy: $IMAGE_ID
+
+# Kiểm tra chi tiết trong Ceph
+ssh root@ceph-mon1 "rbd info images/$IMAGE_ID"
+
+# Kiểm tra filesystem - nếu dùng Ceph thì KHÔNG có file mới ở đây
+ls -lh /var/lib/glance/images/
+# Thư mục trống hoặc chỉ có file cũ → Ceph đang hoạt động đúng
+
+# Cleanup
+openstack image delete cirros-ceph-test
 ```
 
 ### 6.2 Tích hợp Cinder → Ceph RBD

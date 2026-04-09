@@ -492,20 +492,25 @@ chown glance:glance /etc/ceph/ceph.client.glance.keyring
 chmod 640 /etc/ceph/ceph.client.glance.keyring
 ```
 
-Sửa `/etc/glance/glance-api.conf`:
+Sửa `/etc/glance/glance-api.conf` - cần thay đổi 3 chỗ:
 
-> Từ OpenStack 2024.x trở đi, Glance dùng **multi-store** config. Cần set `enabled_backends` và `default_backend` trong `[DEFAULT]`, sau đó tạo section riêng cho backend.
-
-Trong section `[DEFAULT]`:
-
+**Chỗ 1:** Tìm section `[DEFAULT]`, sửa `enabled_backends`:
 ```ini
 [DEFAULT]
 enabled_backends = ceph:rbd
 default_backend = ceph
 ```
 
-Thêm section `[ceph]` mới (thay thế `[glance_store]`):
+> Nếu trước đó là `enabled_backends = fs:file` thì thay thành `ceph:rbd`.
+> Nếu muốn giữ cả 2 backend: `enabled_backends = fs:file,ceph:rbd`
 
+**Chỗ 2:** Tìm section `[glance_store]`, sửa hoặc thêm `default_backend`:
+```ini
+[glance_store]
+default_backend = ceph
+```
+
+**Chỗ 3:** Thêm section `[ceph]` mới vào cuối file:
 ```ini
 [ceph]
 rbd_store_pool = images
@@ -515,8 +520,16 @@ rbd_store_chunk_size = 8
 ```
 
 ```bash
+# Verify config trước khi restart
+grep -n "default_backend\|enabled_backends" /etc/glance/glance-api.conf
+grep -A5 '\[ceph\]' /etc/glance/glance-api.conf
+
 systemctl restart glance-api
+sleep 3
 systemctl status glance-api
+
+# Nếu vẫn lỗi, xem log chi tiết
+journalctl -u glance-api --since "1 minute ago" --no-pager | grep -v "^$"
 
 # Verify
 source ~/admin-openrc

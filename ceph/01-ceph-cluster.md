@@ -53,6 +53,7 @@ Networks:
 5. [Tạo pools cho OpenStack](#5-tạo-pools-cho-openstack)
 6. [Tích hợp với OpenStack](#6-tích-hợp-với-openstack)
 7. [Kiểm tra](#7-kiểm-tra)
+8. [Cài đặt RGW - Tùy chọn](#8-cài-đặt-rgw-rados-gateway---tùy-chọn)
 
 ---
 
@@ -830,3 +831,143 @@ openstack image delete test-ceph-image
 ---
 
 Tiếp theo: [02-ceph-openstack-integration.md](02-ceph-openstack-integration.md)
+
+---
+
+## 8. Cài đặt RGW (RADOS Gateway) - Tùy chọn
+
+> RGW cung cấp S3/Swift compatible API, có thể thay thế OpenStack Swift.
+
+### 8.1 Deploy RGW qua cephadm
+
+```bash
+# Trên ceph-mon1
+# Deploy RGW trên ceph-mon1, port 7480
+ceph orch apply rgw default --placement="1 ceph-mon1" --port=7480
+
+# Theo dõi
+watch ceph orch ls
+# Chờ đến khi: rgw.default RUNNING
+```
+
+### 8.2 Tạo user RGW
+
+```bash
+# Tạo user S3
+radosgw-admin user create \
+  --uid=openstack \
+  --display-name="OpenStack User" \
+  --access-key=openstack \
+  --secret=Welcome123
+
+# Verify
+radosgw-admin user info --uid=openstack
+```
+
+### 8.3 Test S3 API
+
+```bash
+# Cài s3cmd
+apt install -y s3cmd
+
+# Cấu hình
+cat > ~/.s3cfg << 'EOF'
+[default]
+access_key = openstack
+secret_key = Welcome123
+host_base = 192.168.225.202:7480
+host_bucket = 192.168.225.202:7480/%(bucket)
+use_https = False
+EOF
+
+# Test tạo bucket
+s3cmd mb s3://test-bucket
+s3cmd ls
+
+# Upload file
+echo "hello ceph rgw" > /tmp/test.txt
+s3cmd put /tmp/test.txt s3://test-bucket/
+s3cmd ls s3://test-bucket/
+
+# Download
+s3cmd get s3://test-bucket/test.txt /tmp/test-download.txt
+cat /tmp/test-download.txt
+
+# Cleanup
+s3cmd del s3://test-bucket/test.txt
+s3cmd rb s3://test-bucket
+```
+
+### 8.4 Tích hợp RGW với Keystone (thay thế Swift)
+
+> RGW có thể thay thế hoàn toàn Swift. Endpoint phải match với endpoint Swift đã đăng ký trong Keystone.
+
+```bash
+# Trên controller - xóa endpoint Swift cũ nếu muốn thay hoàn toàn
+source ~/admin-openrc
+
+# Xem endpoint Swift hiện tại
+openstack endpoint list --service object-store
+
+# Xóa endpoint Swift cũ (nếu muốn thay bằng RGW)
+# openstack endpoint delete <endpoint-id-public>
+# openstack endpoint delete <endpoint-id-internal>
+# openstack endpoint delete <endpoint-id-admin>
+
+# Hoặc tạo endpoint mới trỏ đến RGW (giữ nguyên Swift)
+# Nếu Swift đã có endpoint ở port 8080, tạo thêm endpoint RGW ở port 7480
+openstack endpoint create --region RegionOne \
+  object-store public "http://192.168.225.202:7480/swift/v1/AUTH_%(project_id)s"
+openstack endpoint create --region RegionOne \
+  object-store internal "http://192.168.225.202:7480/swift/v1/AUTH_%(project_id)s"
+openstack endpoint create --region RegionOne \
+  object-store admin "http://192.168.225.202:7480/swift/v1"
+```
+
+Cấu hình RGW dùng Keystone auth trên **ceph-mon1**:
+
+```bash
+# Lấy tên RGW service đang chạy
+ceph orch ls | grep rgw
+
+# Cấu hình Keystone integration
+ceph config set client.rgw.default rgw_keystone_url http://controller:5000
+ceph config set client.rgw.default rgw_keystone_api_version 3
+ceph config set client.rgw.default rgw_keystone_admin_user swift
+ceph config set client.rgw.default rgw_keystone_admin_password Welcome123
+ceph config set client.rgw.default rgw_keystone_admin_project service
+ceph config set client.rgw.default rgw_keystone_admin_domain Default
+ceph config set client.rgw.default rgw_keystone_accepted_roles "member,admin,user"
+ceph config set client.rgw.default rgw_keystone_token_cache_size 500
+ceph config set client.rgw.default rgw_swift_account_in_url true
+ceph config set client.rgw.default rgw_swift_url_prefix swift
+
+# Restart RGW để apply config
+ceph orch restart rgw.default
+
+# Verify
+ceph orch ls | grep rgw
+```
+
+Test với OpenStack credentials:
+
+```bash
+source ~/demo-openrc
+
+# Test tạo container (giống Swift)
+openstack container create test-rgw-container
+openstack container list
+
+# Upload object
+echo "Hello RGW" > /tmp/test-rgw.txt
+openstack object create test-rgw-container /tmp/test-rgw.txt --name test-rgw.txt
+openstack object list test-rgw-container
+
+# Download
+openstack object save test-rgw-container test-rgw.txt --file /tmp/downloaded-rgw.txt
+cat /tmp/downloaded-rgw.txt
+
+# Cleanup
+openstack object delete test-rgw-container test-rgw.txt
+openstack container delete test-rgw-container
+```

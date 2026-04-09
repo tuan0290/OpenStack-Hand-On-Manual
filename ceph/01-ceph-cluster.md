@@ -650,7 +650,7 @@ openstack volume delete test-ceph-vol
 
 ### 6.3 Tạo libvirt secret trên compute1
 
-Trên **compute1** (cần để Nova attach Cinder volume):
+Trên **compute1** (cần để Nova attach Cinder volume qua RBD):
 
 ```bash
 apt install -y python3-rbd ceph-common
@@ -658,12 +658,12 @@ apt install -y python3-rbd ceph-common
 # Tạo UUID cố định cho secret
 CINDER_UUID=$(uuidgen)
 echo "CINDER_UUID=$CINDER_UUID"
-# Lưu UUID này → điền vào rbd_secret_uuid trong cinder.conf ở trên
+# Lưu UUID này lại - cần điền vào cinder.conf và nova.conf
 
-# Lấy key của client.cinder
+# Lấy key của client.cinder từ ceph-mon1
 CINDER_KEY=$(ssh root@ceph-mon1 "ceph auth get-key client.cinder")
 
-# Tạo libvirt secret
+# Tạo libvirt secret XML
 cat > /tmp/secret.xml << EOF
 <secret ephemeral='no' private='no'>
   <uuid>$CINDER_UUID</uuid>
@@ -675,14 +675,27 @@ EOF
 
 virsh secret-define --file /tmp/secret.xml
 virsh secret-set-value --secret $CINDER_UUID --base64 $CINDER_KEY
+# Warning "insecure" là bình thường, không phải lỗi
 
 # Verify
 virsh secret-list
+# Phải thấy UUID vừa tạo
 ```
 
-> Sau khi có UUID, quay lại cập nhật `rbd_secret_uuid` trong `/etc/cinder/cinder.conf` trên controller.
+Sau khi có UUID, cập nhật `rbd_secret_uuid` trên **controller**:
+
+```bash
+# Trên controller - thay <UUID> bằng giá trị thực tế
+sed -i 's/rbd_secret_uuid = <LIBVIRT_SECRET_UUID>/rbd_secret_uuid = <UUID>/' \
+  /etc/cinder/cinder.conf
+
+grep rbd_secret_uuid /etc/cinder/cinder.conf
+systemctl restart cinder-volume
+```
 
 ### 6.4 Tích hợp Nova → Ceph RBD (ephemeral disk)
+
+> Nova ban đầu không có section `[libvirt]` với Ceph config. Cần thêm mới.
 
 Trên **compute1**:
 
@@ -691,10 +704,11 @@ chown nova:nova /etc/ceph/ceph.client.nova.keyring
 chmod 640 /etc/ceph/ceph.client.nova.keyring
 ```
 
-Sửa `/etc/nova/nova.conf`, trong section `[libvirt]`:
+Sửa `/etc/nova/nova.conf` - thêm section `[libvirt]` mới (hoặc sửa nếu đã có):
 
 ```ini
 [libvirt]
+virt_type = qemu
 images_type = rbd
 images_rbd_pool = vms
 images_rbd_ceph_conf = /etc/ceph/ceph.conf
@@ -704,8 +718,41 @@ disk_cachemodes = network=writeback
 hw_disk_discard = unmap
 ```
 
+> `virt_type = qemu` giữ nguyên nếu đã có từ trước (VMware nested virt).
+> Thay `<CINDER_UUID>` bằng UUID đã tạo ở bước 6.3.
+
 ```bash
 systemctl restart nova-compute
+
+# Verify nova-compute up
+openstack compute service list | grep compute
+```
+
+**Verify Nova đang dùng Ceph:**
+
+```bash
+source ~/admin-openrc
+
+# Tạo VM và kiểm tra ephemeral disk lưu trong Ceph vms pool
+NET_ID=$(openstack network show selfservice-net -f value -c id)
+openstack server create \
+  --flavor m1.tiny \
+  --image cirros \
+  --nic net-id=$NET_ID \
+  ceph-nova-test
+
+# Chờ ACTIVE
+watch openstack server show ceph-nova-test -f value -c status
+
+# Lấy server ID
+SERVER_ID=$(openstack server show ceph-nova-test -f value -c id)
+
+# Kiểm tra ephemeral disk trong Ceph vms pool
+ssh root@ceph-mon1 "rbd ls vms"
+# Phải thấy: $SERVER_ID_disk hoặc $SERVER_ID
+
+# Cleanup
+openstack server delete ceph-nova-test
 ```
 
 ---

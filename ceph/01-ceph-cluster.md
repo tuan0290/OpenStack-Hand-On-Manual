@@ -54,6 +54,7 @@ Networks:
 6. [Tích hợp với OpenStack](#6-tích-hợp-với-openstack)
 7. [Kiểm tra](#7-kiểm-tra)
 8. [Cài đặt RGW - Tùy chọn](#8-cài-đặt-rgw-rados-gateway---tùy-chọn)
+9. [Cài đặt CephFS + NFS Gateway](#9-cài-đặt-cephfs--nfs-gateway)
 
 ---
 
@@ -842,10 +843,8 @@ Tiếp theo: [02-ceph-openstack-integration.md](02-ceph-openstack-integration.md
 
 ```bash
 # Trên ceph-mon1
-# Deploy RGW trên ceph-mon1, port 7480
 ceph orch apply rgw default --placement="1 ceph-mon1" --port=7480
 
-# Theo dõi
 watch ceph orch ls
 # Chờ đến khi: rgw.default RUNNING
 ```
@@ -853,24 +852,20 @@ watch ceph orch ls
 ### 8.2 Tạo user RGW
 
 ```bash
-# Tạo user S3
 radosgw-admin user create \
   --uid=openstack \
   --display-name="OpenStack User" \
   --access-key=openstack \
   --secret=Welcome123
 
-# Verify
 radosgw-admin user info --uid=openstack
 ```
 
 ### 8.3 Test S3 API
 
 ```bash
-# Cài s3cmd
 apt install -y s3cmd
 
-# Cấu hình
 cat > ~/.s3cfg << 'EOF'
 [default]
 access_key = openstack
@@ -880,16 +875,10 @@ host_bucket = 192.168.225.202:7480/%(bucket)
 use_https = False
 EOF
 
-# Test tạo bucket
 s3cmd mb s3://test-bucket
-s3cmd ls
-
-# Upload file
 echo "hello ceph rgw" > /tmp/test.txt
 s3cmd put /tmp/test.txt s3://test-bucket/
 s3cmd ls s3://test-bucket/
-
-# Download
 s3cmd get s3://test-bucket/test.txt /tmp/test-download.txt
 cat /tmp/test-download.txt
 
@@ -900,22 +889,20 @@ s3cmd rb s3://test-bucket
 
 ### 8.4 Tích hợp RGW với Keystone (thay thế Swift)
 
-> RGW có thể thay thế hoàn toàn Swift. Endpoint phải match với endpoint Swift đã đăng ký trong Keystone.
+> RGW thay thế hoàn toàn Swift. Endpoint format phải match với Swift endpoint đã đăng ký.
 
 ```bash
-# Trên controller - xóa endpoint Swift cũ nếu muốn thay hoàn toàn
 source ~/admin-openrc
 
 # Xem endpoint Swift hiện tại
 openstack endpoint list --service object-store
 
-# Xóa endpoint Swift cũ (nếu muốn thay bằng RGW)
-# openstack endpoint delete <endpoint-id-public>
-# openstack endpoint delete <endpoint-id-internal>
-# openstack endpoint delete <endpoint-id-admin>
+# Xóa endpoint Swift cũ
+openstack endpoint delete <endpoint-id-public>
+openstack endpoint delete <endpoint-id-internal>
+openstack endpoint delete <endpoint-id-admin>
 
-# Hoặc tạo endpoint mới trỏ đến RGW (giữ nguyên Swift)
-# Nếu Swift đã có endpoint ở port 8080, tạo thêm endpoint RGW ở port 7480
+# Tạo endpoint mới trỏ về RGW
 openstack endpoint create --region RegionOne \
   object-store public "http://192.168.225.202:7480/swift/v1/AUTH_%(project_id)s"
 openstack endpoint create --region RegionOne \
@@ -927,10 +914,6 @@ openstack endpoint create --region RegionOne \
 Cấu hình RGW dùng Keystone auth trên **ceph-mon1**:
 
 ```bash
-# Lấy tên RGW service đang chạy
-ceph orch ls | grep rgw
-
-# Cấu hình Keystone integration
 ceph config set client.rgw.default rgw_keystone_url http://controller:5000
 ceph config set client.rgw.default rgw_keystone_api_version 3
 ceph config set client.rgw.default rgw_keystone_admin_user swift
@@ -942,32 +925,113 @@ ceph config set client.rgw.default rgw_keystone_token_cache_size 500
 ceph config set client.rgw.default rgw_swift_account_in_url true
 ceph config set client.rgw.default rgw_swift_url_prefix swift
 
-# Restart RGW để apply config
 ceph orch restart rgw.default
-
-# Verify
-ceph orch ls | grep rgw
 ```
 
 Test với OpenStack credentials:
 
 ```bash
 source ~/demo-openrc
-
-# Test tạo container (giống Swift)
 openstack container create test-rgw-container
-openstack container list
-
-# Upload object
 echo "Hello RGW" > /tmp/test-rgw.txt
 openstack object create test-rgw-container /tmp/test-rgw.txt --name test-rgw.txt
 openstack object list test-rgw-container
-
-# Download
 openstack object save test-rgw-container test-rgw.txt --file /tmp/downloaded-rgw.txt
 cat /tmp/downloaded-rgw.txt
 
 # Cleanup
 openstack object delete test-rgw-container test-rgw.txt
 openstack container delete test-rgw-container
+```
+
+---
+
+## 9. Cài đặt CephFS + NFS Gateway - Tùy chọn
+
+> CephFS cung cấp shared filesystem - nhiều client mount cùng lúc.
+
+### 9.1 Deploy MDS và tạo CephFS
+
+```bash
+# Trên ceph-mon1
+ceph orch apply mds cephfs --placement="1 ceph-mon1"
+
+# Tạo CephFS (tự tạo 2 pools: data và metadata)
+ceph fs volume create cephfs
+
+# Verify
+ceph fs ls
+ceph fs status cephfs
+# Phải thấy MDS active
+```
+
+### 9.2 Deploy NFS Gateway
+
+```bash
+ceph nfs cluster create ceph-nfs "ceph-mon1"
+
+# Tạo export
+ceph nfs export create cephfs \
+  --cluster-id ceph-nfs \
+  --pseudo-path /cephfs \
+  --fsname cephfs \
+  --path /
+
+ceph nfs export ls ceph-nfs
+```
+
+### 9.3 Mount NFS trên client
+
+Trên **controller** hoặc **compute1**:
+
+```bash
+apt install -y nfs-common
+mkdir -p /mnt/cephfs
+mount -t nfs 192.168.225.202:/cephfs /mnt/cephfs
+
+# Test
+echo "hello cephfs" > /mnt/cephfs/test.txt
+cat /mnt/cephfs/test.txt
+df -h /mnt/cephfs
+```
+
+Persistent mount - thêm vào `/etc/fstab`:
+
+```
+192.168.225.202:/cephfs  /mnt/cephfs  nfs  defaults,_netdev  0  0
+```
+
+### 9.4 Mount CephFS trực tiếp (kernel client)
+
+```bash
+ADMIN_KEY=$(ssh root@ceph-mon1 "ceph auth get-key client.admin")
+mkdir -p /mnt/cephfs-kernel
+mount -t ceph 192.168.225.202:/ /mnt/cephfs-kernel \
+  -o name=admin,secret=$ADMIN_KEY
+df -h /mnt/cephfs-kernel
+```
+
+### 9.5 Tạo user riêng cho CephFS
+
+```bash
+# Trên ceph-mon1
+ceph auth get-or-create client.cephfs-user \
+  mon 'allow r' \
+  mds 'allow rw path=/' \
+  osd 'allow rw pool=cephfs.cephfs.data'
+
+ceph auth get-or-create client.cephfs-user > /etc/ceph/ceph.client.cephfs-user.keyring
+
+# Mount với user riêng
+CEPHFS_KEY=$(ceph auth get-key client.cephfs-user)
+mount -t ceph 192.168.225.202:/ /mnt/cephfs-kernel \
+  -o name=cephfs-user,secret=$CEPHFS_KEY
+```
+
+### 9.6 Verify
+
+```bash
+ceph fs status cephfs
+ceph tell mds.cephfs.0 client ls
+ceph df | grep cephfs
 ```

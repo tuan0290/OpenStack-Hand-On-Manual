@@ -40,9 +40,9 @@ Vấn đề:                        ceph-osd2 (OSD)      ← data node 2
 │  └──────────────┘  └──────────────┘  └──────────────┘          │
 │                                                                 │
 │  Networks:                                                      │
-│  ens33 (192.168.182.x) → NAT/Internet                          │
-│  ens37 (192.168.225.x) → Management / Public                   │
-│  ens38 (192.168.147.x) → Cluster (OSD replication)             │
+│  ens160 (192.168.182.x) → NAT/Internet                          │
+│  ens192 (192.168.225.x) → Management / Public                   │
+│  ens224 (192.168.147.x) → Cluster (OSD replication)             │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -61,7 +61,7 @@ Vấn đề:                        ceph-osd2 (OSD)      ← data node 2
 
 ## 1. IP Planning
 
-| Hostname | ens33 (NAT) | ens37 (Management) | ens38 (Cluster) | Role | Disk OS | Disk Data |
+| Hostname | ens160 (NAT) | ens192 (Management) | ens224 (Cluster) | Role | Disk OS | Disk Data |
 |---|---|---|---|---|---|---|
 | ceph-mon1 | 192.168.182.202 | 192.168.225.202 | 192.168.147.202 | MON + MGR | 20 GB | - |
 | ceph-mon2 | 192.168.182.205 | 192.168.225.205 | 192.168.147.205 | MON + MGR | 20 GB | - |
@@ -107,28 +107,83 @@ cat >> /etc/hosts << 'EOF'
 EOF
 ```
 
-### 2.3 Cấu hình network (nmcli - RHEL style)
+### 2.3 Cấu hình network
+
+Trên RHEL 9, network config lưu trong `/etc/NetworkManager/system-connections/`. Có 2 cách:
+
+**Cách 1: Dùng file config (khuyến nghị)**
 
 Trên **ceph-mon1** (thay IP tương ứng cho các node khác):
 
 ```bash
-# ens33 - NAT/Internet
-nmcli con mod ens33 ipv4.addresses 192.168.182.202/24 \
-  ipv4.gateway 192.168.182.2 \
-  ipv4.dns 8.8.8.8 \
-  ipv4.method manual
-nmcli con up ens33
+# ens160 - NAT/Internet
+cat > /etc/NetworkManager/system-connections/ens160.nmconnection << 'EOF'
+[connection]
+id=ens160
+type=ethernet
+interface-name=ens160
 
-# ens37 - Management
-nmcli con mod ens37 ipv4.addresses 192.168.225.202/24 \
-  ipv4.method manual
-nmcli con up ens37
+[ipv4]
+method=manual
+addresses=192.168.182.202/24
+gateway=192.168.182.2
+dns=8.8.8.8
 
-# ens38 - Cluster network
-nmcli con mod ens38 ipv4.addresses 192.168.147.202/24 \
-  ipv4.method manual
-nmcli con up ens38
+[ipv6]
+method=disabled
+EOF
+
+# ens192 - Management
+cat > /etc/NetworkManager/system-connections/ens192.nmconnection << 'EOF'
+[connection]
+id=ens192
+type=ethernet
+interface-name=ens192
+
+[ipv4]
+method=manual
+addresses=192.168.225.202/24
+
+[ipv6]
+method=disabled
+EOF
+
+# ens224 - Cluster network
+cat > /etc/NetworkManager/system-connections/ens224.nmconnection << 'EOF'
+[connection]
+id=ens224
+type=ethernet
+interface-name=ens224
+
+[ipv4]
+method=manual
+addresses=192.168.147.202/24
+
+[ipv6]
+method=disabled
+EOF
+
+# Set permissions (bắt buộc)
+chmod 600 /etc/NetworkManager/system-connections/*.nmconnection
+
+# Apply
+nmcli connection reload
+nmcli connection up ens160
+nmcli connection up ens192
+nmcli connection up ens224
 ```
+
+**Cách 2: Dùng nmcli command**
+
+```bash
+nmcli con mod ens160 ipv4.addresses 192.168.182.202/24 \
+  ipv4.gateway 192.168.182.2 ipv4.dns 8.8.8.8 ipv4.method manual
+nmcli con mod ens192 ipv4.addresses 192.168.225.202/24 ipv4.method manual
+nmcli con mod ens224 ipv4.addresses 192.168.147.202/24 ipv4.method manual
+nmcli con up ens160 && nmcli con up ens192 && nmcli con up ens224
+```
+
+> Cả 2 cách đều tạo ra cùng 1 file trong `/etc/NetworkManager/system-connections/`. Cách 1 dễ kiểm tra và sửa hơn.
 
 ### 2.4 Cấu hình SELinux và Firewall
 

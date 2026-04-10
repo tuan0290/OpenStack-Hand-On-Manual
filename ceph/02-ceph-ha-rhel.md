@@ -388,9 +388,22 @@ ceph orch device ls --refresh
 
 ### 5.3 Wipe disk nếu cần
 
+> Trên RHEL với VMware NVMe controller, disk data là `nvme0n2` (không phải `sdb`).
+> Kiểm tra tên disk thực tế trước:
+
 ```bash
+# Kiểm tra tên disk trên OSD nodes
 for node in ceph-osd1 ceph-osd2 ceph-osd3; do
-  ssh root@$node "wipefs -a /dev/sdb && sgdisk --zap-all /dev/sdb"
+  echo "=== $node ==="
+  ssh root@$node "lsblk | grep -v part"
+done
+# Tìm disk 50GB chưa có partition → đó là disk data
+```
+
+```bash
+# Wipe disk (thay nvme0n2 nếu tên khác)
+for node in ceph-osd1 ceph-osd2 ceph-osd3; do
+  ssh root@$node "wipefs -a /dev/nvme0n2 && sgdisk --zap-all /dev/nvme0n2"
 done
 ```
 

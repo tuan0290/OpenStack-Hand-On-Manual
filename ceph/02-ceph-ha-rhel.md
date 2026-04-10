@@ -170,6 +170,7 @@ systemctl disable firewalld
 
 ```bash
 mkdir -p /mnt
+mount -o loop rhel-9.7-x86_64-dvd.iso /mnt
 mount /dev/sr0 /mnt
 
 # Tạo repo file
@@ -250,56 +251,28 @@ ssh-copy-id root@compute1
 
 ### 3.1 Cài đặt cephadm
 
-> Bản DVD ISO không có internet - cài từ local repo có sẵn trên ISO.
+> `cephadm` không có trong RHEL DVD - download binary trực tiếp từ download.ceph.com (cần internet).
 
 ```bash
-# Kiểm tra repo từ DVD ISO đã được mount chưa
-ls /etc/yum.repos.d/
-# Thường có: redhat.repo hoặc rhel-dvd.repo
+# Download cephadm binary - Ceph Squid v19.2.3
+CEPH_RELEASE=19.2.3
+curl --silent --remote-name --location \
+  https://download.ceph.com/rpm-${CEPH_RELEASE}/el9/noarch/cephadm
 
-# Nếu chưa có repo, mount ISO và tạo repo
-# mount /dev/sr0 /mnt/dvd
-# cat > /etc/yum.repos.d/dvd.repo << 'EOF'
-# [dvd-BaseOS]
-# name=RHEL DVD BaseOS
-# baseurl=file:///mnt/dvd/BaseOS
-# enabled=1
-# gpgcheck=0
-#
-# [dvd-AppStream]
-# name=RHEL DVD AppStream
-# baseurl=file:///mnt/dvd/AppStream
-# enabled=1
-# gpgcheck=0
-# EOF
+# Verify file đúng (phải là Python script, không phải HTML)
+head -3 cephadm
+# Phải thấy: #!/usr/bin/python3
 
-# Kiểm tra cephadm có trong repo không
-dnf search cephadm
+chmod +x cephadm
+./cephadm version
 
-# Cài từ DVD repo
-dnf install -y cephadm ceph-common
+# Move vào PATH
+mv cephadm /usr/local/bin/
 
-# Verify
-cephadm version
+# Thêm Ceph repo và cài ceph-common (CLI tools)
+cephadm add-repo --release squid
+dnf install -y ceph-common
 ```
-
-> Nếu `cephadm` không có trong DVD ISO (thường không có trong RHEL DVD):
-> ```bash
-> # Option 1: Dùng pip
-> pip3 install cephadm
->
-> # Option 2: Download binary trực tiếp (cần internet 1 lần)
-> curl --silent --remote-name --location \
->   https://github.com/ceph/ceph/raw/squid/src/cephadm/cephadm
-> chmod +x cephadm
-> mv cephadm /usr/local/bin/
-> ```
->
-> Với RHEL có subscription:
-> ```bash
-> subscription-manager repos --enable=rhceph-6-tools-for-rhel-9-x86_64-rpms
-> dnf install -y cephadm
-> ```
 
 ### 3.2 Bootstrap cluster
 

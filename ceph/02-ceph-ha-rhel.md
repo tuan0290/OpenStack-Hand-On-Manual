@@ -161,18 +161,12 @@ systemctl stop firewalld
 systemctl disable firewalld
 ```
 
-### 2.5 Mount DVD ISO và cấu hình local repo
+### 2.5 Mount DVD và cấu hình local repo
 
-> Bước này phải làm **trước** khi cài bất kỳ package nào.
+> DVD ISO đã được attach vào VM trong VMware khi cài OS - chỉ cần mount `/dev/sr0`.
 
 ```bash
-# Mount DVD ISO (chọn 1 trong 2 cách)
 mkdir -p /mnt
-
-# Cách 1: Mount file ISO
-mount -o loop rhel-9.7-x86_64-dvd.iso /mnt
-
-# Cách 2: Mount DVD drive
 mount /dev/sr0 /mnt
 
 # Tạo repo file
@@ -194,10 +188,12 @@ baseurl=file:///mnt/AppStream/
 gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-redhat-release
 EOF
 
-# Verify repo
+# Verify
 dnf clean all && dnf repolist
 # Phải thấy: BaseOS và AppStream
 ```
+
+> Sau khi cài xong tất cả packages, disconnect DVD trong VMware là xong - không tốn space trong VM.
 
 ### 2.6 Cài đặt package cơ bản
 

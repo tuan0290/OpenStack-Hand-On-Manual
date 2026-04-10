@@ -164,6 +164,9 @@ systemctl disable firewalld
 ### 2.5 Mount DVD và cấu hình local repo
 
 > DVD ISO đã được attach vào VM trong VMware khi cài OS - chỉ cần mount `/dev/sr0`.
+>
+> Nếu gặp lỗi `no medium found on /dev/sr0`:
+> VMware → VM Settings → CD/DVD → **Connected** ✓ → chọn ISO file → OK
 
 ```bash
 mkdir -p /mnt

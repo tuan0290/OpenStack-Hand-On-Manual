@@ -18,8 +18,8 @@ Tài liệu cài đặt và tích hợp **Ceph** làm storage backend cho OpenSt
 
 | File | Nội dung |
 |---|---|
-| [01-ceph-cluster.md](01-ceph-cluster.md) | Cài đặt Ceph cluster (MON + OSD) bằng cephadm |
-| [02-ceph-openstack-integration.md](02-ceph-openstack-integration.md) | Tích hợp Ceph với Glance, Cinder, Nova |
+| [01-ceph-cluster.md](01-ceph-cluster.md) | Cài đặt Ceph lab (Ubuntu 24.04, 3 VM) |
+| [02-ceph-ha-rhel.md](02-ceph-ha-rhel.md) | Cài đặt Ceph HA (RHEL 9, 6 VM, 3 MON + 3 OSD) |
 
 ## IP Planning Ceph nodes
 

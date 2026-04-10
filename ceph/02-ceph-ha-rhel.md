@@ -300,11 +300,9 @@ cephadm bootstrap \
 # Username: admin / Password: Welcome123
 ```
 
-### 3.3 Cài ceph-common và verify
+### 3.3 Verify cài đặt
 
 ```bash
-cephadm install ceph-common
-
 ceph -v
 # ceph version 19.x.x (squid)
 

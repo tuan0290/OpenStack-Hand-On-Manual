@@ -109,81 +109,45 @@ EOF
 
 ### 2.3 Cấu hình network
 
-Trên RHEL 9, network config lưu trong `/etc/NetworkManager/system-connections/`. Có 2 cách:
-
-**Cách 1: Dùng file config (khuyến nghị)**
+Trên RHEL 9, dùng `nmcli con mod` để chỉ sửa những field cần thiết - giữ nguyên `uuid`, `autoconnect-priority` và các field khác của file gốc.
 
 Trên **ceph-mon1** (thay IP tương ứng cho các node khác):
 
 ```bash
 # ens160 - NAT/Internet
-cat > /etc/NetworkManager/system-connections/ens160.nmconnection << 'EOF'
-[connection]
-id=ens160
-type=ethernet
-interface-name=ens160
-
-[ipv4]
-method=manual
-addresses=192.168.182.202/24
-gateway=192.168.182.2
-dns=8.8.8.8
-
-[ipv6]
-method=disabled
-EOF
+nmcli con mod ens160 \
+  ipv4.method manual \
+  ipv4.addresses "192.168.182.202/24" \
+  ipv4.gateway "192.168.182.2" \
+  ipv4.dns "8.8.8.8" \
+  ipv6.method disabled
 
 # ens192 - Management
-cat > /etc/NetworkManager/system-connections/ens192.nmconnection << 'EOF'
-[connection]
-id=ens192
-type=ethernet
-interface-name=ens192
-
-[ipv4]
-method=manual
-addresses=192.168.225.202/24
-
-[ipv6]
-method=disabled
-EOF
+nmcli con mod ens192 \
+  ipv4.method manual \
+  ipv4.addresses "192.168.225.202/24" \
+  ipv4.gateway "" \
+  ipv6.method disabled
 
 # ens224 - Cluster network
-cat > /etc/NetworkManager/system-connections/ens224.nmconnection << 'EOF'
-[connection]
-id=ens224
-type=ethernet
-interface-name=ens224
-
-[ipv4]
-method=manual
-addresses=192.168.147.202/24
-
-[ipv6]
-method=disabled
-EOF
-
-# Set permissions (bắt buộc)
-chmod 600 /etc/NetworkManager/system-connections/*.nmconnection
+nmcli con mod ens224 \
+  ipv4.method manual \
+  ipv4.addresses "192.168.147.202/24" \
+  ipv4.gateway "" \
+  ipv6.method disabled
 
 # Apply
-nmcli connection reload
-nmcli connection up ens160
-nmcli connection up ens192
-nmcli connection up ens224
+nmcli con up ens160
+nmcli con up ens192
+nmcli con up ens224
+
+# Verify
+ip addr show ens160
+ip addr show ens192
+ip addr show ens224
 ```
 
-**Cách 2: Dùng nmcli command**
-
-```bash
-nmcli con mod ens160 ipv4.addresses 192.168.182.202/24 \
-  ipv4.gateway 192.168.182.2 ipv4.dns 8.8.8.8 ipv4.method manual
-nmcli con mod ens192 ipv4.addresses 192.168.225.202/24 ipv4.method manual
-nmcli con mod ens224 ipv4.addresses 192.168.147.202/24 ipv4.method manual
-nmcli con up ens160 && nmcli con up ens192 && nmcli con up ens224
-```
-
-> Cả 2 cách đều tạo ra cùng 1 file trong `/etc/NetworkManager/system-connections/`. Cách 1 dễ kiểm tra và sửa hơn.
+> `nmcli con mod` chỉ ghi đè field được chỉ định, `uuid`/`autoconnect-priority`/`timestamp` giữ nguyên.
 
 ### 2.4 Cấu hình SELinux và Firewall
 

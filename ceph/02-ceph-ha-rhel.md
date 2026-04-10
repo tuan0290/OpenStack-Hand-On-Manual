@@ -172,10 +172,10 @@ systemctl disable firewalld
 ### 2.5 Cài đặt package cơ bản
 
 ```bash
-# Update system
+# Update từ local repo (DVD ISO - không cần internet)
 dnf update -y
 
-# Cài packages cần thiết
+# Cài packages cần thiết - tất cả có sẵn trong DVD ISO
 dnf install -y chrony curl wget vim python3 podman
 
 # Bắt buộc: cephadm dùng podman để chạy containers
@@ -221,19 +221,52 @@ ssh-copy-id root@compute1
 
 ### 3.1 Cài đặt cephadm
 
-```bash
-# Thêm Ceph repo
-dnf install -y centos-release-ceph-squid 2>/dev/null || \
-  dnf config-manager --add-repo https://download.ceph.com/rpm-squid/el9/x86_64/
+> Bản DVD ISO không có internet - cài từ local repo có sẵn trên ISO.
 
-# Cài cephadm và ceph-common
+```bash
+# Kiểm tra repo từ DVD ISO đã được mount chưa
+ls /etc/yum.repos.d/
+# Thường có: redhat.repo hoặc rhel-dvd.repo
+
+# Nếu chưa có repo, mount ISO và tạo repo
+# mount /dev/sr0 /mnt/dvd
+# cat > /etc/yum.repos.d/dvd.repo << 'EOF'
+# [dvd-BaseOS]
+# name=RHEL DVD BaseOS
+# baseurl=file:///mnt/dvd/BaseOS
+# enabled=1
+# gpgcheck=0
+#
+# [dvd-AppStream]
+# name=RHEL DVD AppStream
+# baseurl=file:///mnt/dvd/AppStream
+# enabled=1
+# gpgcheck=0
+# EOF
+
+# Kiểm tra cephadm có trong repo không
+dnf search cephadm
+
+# Cài từ DVD repo
 dnf install -y cephadm ceph-common
 
 # Verify
 cephadm version
 ```
 
-> Với RHEL có subscription, dùng:
+> Nếu `cephadm` không có trong DVD ISO (thường không có trong RHEL DVD):
+> ```bash
+> # Option 1: Dùng pip
+> pip3 install cephadm
+>
+> # Option 2: Download binary trực tiếp (cần internet 1 lần)
+> curl --silent --remote-name --location \
+>   https://github.com/ceph/ceph/raw/squid/src/cephadm/cephadm
+> chmod +x cephadm
+> mv cephadm /usr/local/bin/
+> ```
+>
+> Với RHEL có subscription:
 > ```bash
 > subscription-manager repos --enable=rhceph-6-tools-for-rhel-9-x86_64-rpms
 > dnf install -y cephadm

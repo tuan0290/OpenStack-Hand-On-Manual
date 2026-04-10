@@ -152,31 +152,61 @@ ip addr show ens224
 ### 2.4 Cấu hình SELinux và Firewall
 
 ```bash
-# SELinux - set permissive cho lab (production nên dùng enforcing với policy đúng)
+# SELinux - set permissive cho lab
 setenforce 0
 sed -i 's/SELINUX=enforcing/SELINUX=permissive/' /etc/selinux/config
 
-# Firewall - mở ports cần thiết
-firewall-cmd --permanent --add-service=ceph
-firewall-cmd --permanent --add-service=ceph-mon
-firewall-cmd --permanent --add-port=8443/tcp   # dashboard
-firewall-cmd --permanent --add-port=9283/tcp   # prometheus
-firewall-cmd --permanent --add-port=7480/tcp   # RGW
-firewall-cmd --reload
-
-# Hoặc disable firewall cho lab
+# Disable firewall cho lab (production cần cấu hình đúng)
 systemctl stop firewalld
 systemctl disable firewalld
 ```
 
-### 2.5 Cài đặt package cơ bản
+### 2.5 Mount DVD ISO và cấu hình local repo
+
+> Bước này phải làm **trước** khi cài bất kỳ package nào.
 
 ```bash
-# Update từ local repo (DVD ISO - không cần internet)
-dnf update -y
+# Mount DVD ISO (chọn 1 trong 2 cách)
+mkdir -p /mnt
 
-# Cài packages cần thiết - tất cả có sẵn trong DVD ISO
-dnf install -y chrony curl wget vim python3 podman
+# Cách 1: Mount file ISO
+mount -o loop rhel-9.7-x86_64-dvd.iso /mnt
+
+# Cách 2: Mount DVD drive
+mount /dev/sr0 /mnt
+
+# Tạo repo file
+cat > /etc/yum.repos.d/rhel9dvd.repo << 'EOF'
+[BaseOS]
+name=BaseOS Packages Red Hat Enterprise Linux 9
+metadata_expire=-1
+gpgcheck=1
+enabled=1
+baseurl=file:///mnt/BaseOS/
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-redhat-release
+
+[AppStream]
+name=AppStream Packages Red Hat Enterprise Linux 9
+metadata_expire=-1
+gpgcheck=1
+enabled=1
+baseurl=file:///mnt/AppStream/
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-redhat-release
+EOF
+
+# Verify repo
+dnf clean all && dnf repolist
+# Phải thấy: BaseOS và AppStream
+```
+
+### 2.6 Cài đặt package cơ bản
+
+```bash
+# Development tools và utilities
+dnf groupinstall "Development Tools" -y
+dnf install -y yum-utils vim conntrack-tools iproute-tc telnet \
+  chrony curl wget python3 podman \
+  --disablerepo="*" --enablerepo="BaseOS,AppStream"
 
 # Bắt buộc: cephadm dùng podman để chạy containers
 systemctl enable --now podman

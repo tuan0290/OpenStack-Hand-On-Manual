@@ -269,9 +269,20 @@ chmod +x cephadm
 # Move vào PATH
 mv cephadm /usr/local/bin/
 
-# Thêm Ceph repo và cài ceph-common (CLI tools)
-cephadm add-repo --release squid
-dnf install -y ceph-common
+# Thêm Ceph repo
+cephadm add-repo --release squid 2>/dev/null || true
+# Lỗi epel-release là bình thường, bỏ qua
+
+# Cài EPEL (cần cho dependencies của ceph-common)
+dnf install -y \
+  https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm \
+  --nogpgcheck
+
+# Cài ceph-common (CLI tools)
+dnf install -y ceph-common --nogpgcheck
+
+# Verify
+ceph --version
 ```
 
 ### 3.2 Bootstrap cluster
